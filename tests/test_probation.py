@@ -19,20 +19,11 @@ def env(monkeypatch, tmp_path):
     genomes = list(neat.Population(cfg).population.values())[:4]
     scores = {}  # genome key -> forward fitness the fake backtest reports
 
-    def fake_backtest_many(activate, windows, costs, **kw):
-        key = activate.__self__.genome_key
-        return {"fitness": scores[key], "return_pct": scores[key], "trades": 3}
+    def fake_evaluate(genome, cfg_, windows, costs, **kw):
+        return {"fitness": scores[genome.key], "return_pct": scores[genome.key], "trades": 3}
 
-    orig_create = neat.nn.FeedForwardNetwork.create
-
-    def create(genome, cfg_):
-        net = orig_create(genome, cfg_)
-        net.genome_key = genome.key
-        return net
-
-    monkeypatch.setattr(trainer, "backtest_many", fake_backtest_many)
+    monkeypatch.setattr(trainer, "evaluate", fake_evaluate)
     monkeypatch.setattr(trainer, "windows", lambda market, a, b: {})
-    monkeypatch.setattr(neat.nn.FeedForwardNetwork, "create", staticmethod(create))
     return trainer.open_db(), cfg, genomes, scores
 
 

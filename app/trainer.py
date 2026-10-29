@@ -9,6 +9,7 @@ the trader. Runs forever, every RETRAIN_INTERVAL_HOURS:
 """
 import json
 import logging
+import multiprocessing
 import os
 import pickle
 import sqlite3
@@ -17,13 +18,15 @@ import uuid
 from itertools import count
 
 import neat
+import numpy as np
 
 from . import coinbase_data, config, features, fees
-from .sim import Costs, backtest_many, window
+from .fastsim import evaluate
+from .sim import Costs, window
 
 log = logging.getLogger("trainer")
 
-_DATA = None  # (windows, costs), set in each worker process
+_DATA = None  # (windows, costs, neat config), set once in each worker process
 
 
 def _init_worker(data):
@@ -31,17 +34,43 @@ def _init_worker(data):
     _DATA = data
 
 
-def _eval_genome(genome, cfg):
-    net = neat.nn.FeedForwardNetwork.create(genome, cfg)
-    windows, costs = _DATA
-    return backtest_many(net.activate, windows, costs, chunks=config.FITNESS_CHUNKS)["fitness"]
+def _eval_genome(genome):
+    windows, costs, cfg = _DATA
+    fit = evaluate(genome, cfg, windows, costs, chunks=config.FITNESS_CHUNKS)["fitness"]
+    if config.COMPLEXITY_PENALTY:
+        hidden = len(genome.nodes) - len(cfg.genome_config.output_keys)
+        fit -= config.COMPLEXITY_PENALTY * (hidden + sum(c.enabled for c in genome.connections.values()))
+    return fit
+
+
+class BatchEvaluator:
+    """Like neat.ParallelEvaluator, but ships the data to each worker once and sends
+    genomes in a few big batches: a compiled backtest is faster than a round trip."""
+
+    def __init__(self, workers, windows, costs, cfg):
+        self.workers = workers
+        self.pool = multiprocessing.Pool(workers, initializer=_init_worker, initargs=((windows, costs, cfg),))
+
+    def evaluate(self, genomes, cfg):
+        gs = [g for _, g in genomes]
+        size = max(1, -(-len(gs) // (self.workers * 2)))
+        for g, fit in zip(gs, self.pool.map(_eval_genome, gs, chunksize=size)):
+            g.fitness = fit
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.pool.close()
+        self.pool.join()
 
 
 def load_neat_config():
     cfg = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet,
                       neat.DefaultStagnation, config.NEAT_CONFIG_PATH)
     cfg.pop_size = config.POP_SIZE
-    assert cfg.genome_config.num_inputs == features.N_INPUTS
+    cfg.genome_config.num_inputs = features.N_INPUTS  # follows FEATURES, not the .ini
+    cfg.genome_config.input_keys = [-i - 1 for i in range(features.N_INPUTS)]
     return cfg
 
 
@@ -157,13 +186,16 @@ def _strip(result):
 def load_market(cache, t0, t1):
     """{product: (feats, candles)} for candles starting in [t0 - warmup, t1)."""
     g = config.GRANULARITY
-    out = {}
+    raw = {}
     for pid in config.PRODUCT_IDS:
         candles = cache.get(pid, g, int(t0 - features.WARMUP * g), int(t1))
         if len(candles) > features.WARMUP + 100:
-            out[pid] = (features.market_features(candles, g), candles)
+            raw[pid] = candles
         else:
             log.warning("Skipping %s: only %d candles", pid, len(candles))
+    basket = features.basket_index(raw)
+    out = {pid: (features.market_features(c, g, basket), np.asarray(c, dtype=np.float64))
+           for pid, c in raw.items()}
     if not out:
         raise RuntimeError("No product has enough candle history")
     return out
@@ -225,8 +257,8 @@ def run_probations(db, cfg, market, costs, now_bar):
             db.execute("UPDATE challengers SET status='dropped', decided=? WHERE id=?", (time.time(), cid))
             continue
         win = windows(market, born, now_bar)
-        fwd = backtest_many(neat.nn.FeedForwardNetwork.create(ch["genome"], cfg).activate, win, costs)
-        cfwd = backtest_many(neat.nn.FeedForwardNetwork.create(champ["genome"], cfg).activate, win, costs)
+        fwd = evaluate(ch["genome"], cfg, win, costs)
+        cfwd = evaluate(champ["genome"], cfg, win, costs)
         won = fwd["fitness"] > cfwd["fitness"]
         log.info("Probation %s: forward %+.2f%% vs champion %+.2f%% (%d vs %d trades) -> %s", cid,
                  fwd["return_pct"], cfwd["return_pct"], fwd["trades"], cfwd["trades"],
@@ -265,13 +297,12 @@ def train_cycle(pop, cfg, cache, db, fee_rates):
 
     workers = config.NUM_WORKERS or os.cpu_count() or 1
     pop.best_genome = None  # only compare genomes scored on this cycle's data
-    with neat.ParallelEvaluator(workers, _eval_genome, initializer=_init_worker,
-                                initargs=((train_w, costs),)) as pe:
+    with BatchEvaluator(workers, train_w, costs, cfg) as pe:
         pop.run(pe.evaluate, config.GENERATIONS_PER_CYCLE)
     save_population(pop, cfg)
 
     def score(genome, win, **kw):
-        return backtest_many(neat.nn.FeedForwardNetwork.create(genome, cfg).activate, win, costs, **kw)
+        return evaluate(genome, cfg, win, costs, **kw)
 
     cand = pop.best_genome
     train = score(cand, train_w, chunks=config.FITNESS_CHUNKS)

@@ -1,10 +1,20 @@
-"""Network inputs. The exact same code feeds training and live trading."""
+"""Network inputs. The exact same code feeds training and live trading.
+
+FEATURES=base: 16 inputs from the coin's own candles.
+FEATURES=cross: base + 6 more: the trend of the whole basket (all PRODUCT_IDS, equal
+weight) over 4 and 24 bars, the coin's strength relative to the basket over 24 and 168
+bars, and the day of the week.
+"""
 import math
 
 import numpy as np
 
+from . import config
+
 WARMUP = 300  # bars needed before indicators are meaningful (EMA200 has settled)
-N_MARKET = 16
+N_BASE = 16
+N_CROSS = 6
+N_MARKET = N_BASE + (N_CROSS if config.FEATURES == "cross" else 0)
 N_POSITION = 4
 N_INPUTS = N_MARKET + N_POSITION
 
@@ -38,8 +48,33 @@ def _rsi(close, n=14):
     return 100 - 100 / (1 + rs)
 
 
-def market_features(candles, granularity):
+def basket_index(candles_by_product):
+    """{time: log index} of an equal-weight basket of all coins: the running sum of the
+    mean log return across coins (a coin missing a bar is carried at its last close)."""
+    closes = {p: {int(c[0]): c[4] for c in cs} for p, cs in candles_by_product.items()}
+    times = sorted({t for cs in closes.values() for t in cs})
+    last = {p: None for p in closes}
+    idx, out = 0.0, {}
+    for t in times:
+        rets = []
+        for p, cs in closes.items():
+            if t in cs:
+                if last[p] is not None:
+                    rets.append(math.log(cs[t] / last[p]))
+                last[p] = cs[t]
+        if rets:
+            idx += sum(rets) / len(rets)
+        out[t] = idx
+    return out
+
+
+def _lag_diff(x, k):
+    return x - np.concatenate([np.full(k, x[0]), x[:-k]])
+
+
+def market_features(candles, granularity, basket=None):
     """candles: rows of (start, open, high, low, close, volume), oldest first.
+    basket: basket_index() of all coins (needed for FEATURES=cross).
     Returns an (n, N_MARKET) array; rows before WARMUP are not valid."""
     c = np.asarray(candles, dtype=float)
     t, o, h, l, cl, v = c[:, 0], c[:, 1], c[:, 2], c[:, 3], c[:, 4], c[:, 5]
@@ -74,6 +109,19 @@ def market_features(candles, granularity):
     hi_w, lo_w = _rolling(h, min(week, WARMUP), np.max), _rolling(l, min(week, WARMUP), np.min)
     f[:, 14] = (cl - lo_w) / np.maximum(hi_w - lo_w, 1e-12) * 2 - 1
     f[:, 15] = np.clip((logc - np.log(_ema(cl, 200))) / (vol20 * 10), -3, 3) / 3
+    if N_MARKET > N_BASE:
+        if basket is None:
+            raise ValueError("FEATURES=cross needs the basket index of all coins")
+        b = np.array([basket[int(ti)] for ti in t])  # basket_index covers every coin's bar times
+        bvol = np.maximum(_rolling(np.diff(b, prepend=b[0]), 20, np.std), 1e-6)
+        for j, k in enumerate((4, 24)):
+            f[:, N_BASE + j] = np.clip(_lag_diff(b, k) / (bvol * math.sqrt(k)), -3, 3) / 3
+        for j, k in enumerate((24, week)):
+            rel = _lag_diff(logc, k) - _lag_diff(b, k)
+            f[:, N_BASE + 2 + j] = np.clip(rel / (vol20 * math.sqrt(k)), -3, 3) / 3
+        dow = (((t + granularity) // 86400 + 3) % 7) / 7 * 2 * math.pi  # Monday = 0
+        f[:, N_BASE + 4] = np.sin(dow)
+        f[:, N_BASE + 5] = np.cos(dow)
     return np.nan_to_num(f)
 
 

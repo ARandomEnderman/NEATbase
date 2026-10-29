@@ -66,6 +66,9 @@ MAKER_SELL_FALLBACK_BARS = _i("MAKER_SELL_FALLBACK_BARS", 2)  # unfilled limit s
 SLIPPAGE_BPS = _f("SLIPPAGE_BPS", 5.0)  # extra adverse move on every fill (latency / impact), basis points
 SPREAD_BPS = _f("SPREAD_BPS", 2.0)  # backtest-only: candles have no bid/ask, so assume this spread (live uses the real book)
 
+# Network inputs: base (16 from the coin's own candles) or cross (+6 basket/relative/weekday)
+FEATURES = _s("FEATURES", "base").lower()
+
 # Strategy
 # Position size is set by signal strength: a buy signal just over BUY_THRESHOLD invests
 # 1/SIZE_STEPS of MAX_POSITION_FRACTION of that coin's pot, the strongest signal the full
@@ -87,6 +90,7 @@ FITNESS_CHUNKS = _i("FITNESS_CHUNKS", 4)  # score consistency across this many s
 # riding a bull market scores ~0 and only timing counts. return: raw return.
 FITNESS_MODE = _s("FITNESS_MODE", "alpha").lower()
 DRAWDOWN_PENALTY = _f("DRAWDOWN_PENALTY", 0.5)
+COMPLEXITY_PENALTY = _f("COMPLEXITY_PENALTY", 0.0)  # fitness lost per enabled connection + hidden node
 INACTIVITY_PENALTY = _f("INACTIVITY_PENALTY", 0.25)
 # A candidate that beats the champion on validation must then also beat it on data
 # that didn't exist yet when it was trained, before it may trade.

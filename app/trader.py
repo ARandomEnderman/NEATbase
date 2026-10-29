@@ -120,9 +120,8 @@ def apply_fill(slot, fill, mark):
     return fill["cash_delta"] - cost
 
 
-def step_product(db, st, broker, net, pid, forced_exit):
+def step_product(db, st, broker, net, pid, forced_exit, candles, basket):
     slot = st["slots"][pid]
-    candles = recent_candles(pid)
     mark = broker.mark_price(pid)
     fills = []
 
@@ -136,7 +135,7 @@ def step_product(db, st, broker, net, pid, forced_exit):
         for f, _ in fills:
             f["pnl"] = apply_fill(slot, f, mark)
 
-    feats = features.market_features(candles, config.GRANULARITY)[-1]
+    feats = features.market_features(candles, config.GRANULARITY, basket)[-1]
     fee = broker.taker_fee
     in_pos = slot["qty"] > 0
     value = sell_base(slot["qty"], mark, fee)[0] if in_pos else 0.0
@@ -192,9 +191,18 @@ def step(db, st, broker, net):
     stop = os.path.exists(config.KILL_SWITCH_PATH)
     forced = stop or st["halted"]
     equity = bench = 0.0
+    all_candles = {}
     for pid in st["products"]:
         try:
-            e, b = step_product(db, st, broker, net, pid, forced)
+            all_candles[pid] = recent_candles(pid)
+        except Exception:
+            log.exception("%s: could not fetch candles", pid)
+    basket = features.basket_index(all_candles)
+    for pid in st["products"]:
+        try:
+            if pid not in all_candles:
+                raise RuntimeError("no candles")
+            e, b = step_product(db, st, broker, net, pid, forced, all_candles[pid], basket)
         except Exception:
             log.exception("%s: step failed; keeping its last known value", pid)
             slot = st["slots"][pid]
