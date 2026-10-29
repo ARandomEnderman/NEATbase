@@ -55,30 +55,27 @@ it against the buy & hold line, not against zero.
 
 ## Deploy on ZimaOS
 
-### Option A: build on the server (works right away)
+`compose.yaml` is a complete ZimaOS app. There is nothing to build or clone on the
+server.
 
-SSH into ZimaOS, then:
+1. **One-time: make the image public.** GitHub Actions publishes the image to
+   `ghcr.io/arandomenderman/neatbase` on every push. Because this repo is private, the
+   image starts out private and ZimaOS can't pull it. On GitHub, open your profile →
+   **Packages** → **neatbase** → **Package settings** → **Change visibility** →
+   **Public**. (The image contains this app's code but none of your keys or data.)
+2. In the ZimaOS dashboard: **App Store** → **+** (top right) → **Install a customized
+   app** → **Import** → upload `compose.yaml` → **Submit** → **Install**.
+3. Open the **NEATbase** tile, or go to `http://<zima-ip>:8080` /
+   `http://<tailscale-name>:8080`. **The first visit asks you to create the password.**
+   Do this right after installing.
 
-```sh
-git clone https://github.com/ARandomEnderman/NEATbase.git /DATA/AppData/neatbase-src
-cd /DATA/AppData/neatbase-src
-cp .env.example .env        # optional: edit settings
-docker compose up -d --build
-```
+The first training cycle takes a minute or two. After that the trader makes one decision
+per candle (hourly by default). To update, use **Check then update** in the app's menu
+(it pulls `:latest`).
 
-Open `http://<zima-ip>:8080` (or `http://<tailscale-name>:8080`). **The first visit asks
-you to create the password.** Do this right after deploying. The first training cycle
-takes a minute or two. After that the trader makes one decision per candle (hourly by
-default).
-
-### Option B: install from the ZimaOS dashboard
-
-Pushing to `main` runs `.github/workflows/docker.yml`. It publishes a multi-arch image
-(amd64 + arm64) to `ghcr.io/arandomenderman/neatbase:latest`. If the repo is private,
-make the package public under GitHub → Packages → neatbase → Package settings, or run
-`docker login ghcr.io` on the server. Then in ZimaOS go to **App Store → Custom Install →
-Import** and paste `docker-compose.yml`. You can edit the settings in the app's settings
-screen.
+Not on ZimaOS? Build the image locally and use the same file:
+`docker build -t ghcr.io/arandomenderman/neatbase:latest . && docker compose up -d`
+(change the `/DATA/AppData/...` paths in `compose.yaml` first).
 
 ### Folders on the host
 
@@ -87,18 +84,16 @@ screen.
 | `/DATA/AppData/neatbase/config` | `/config` (read-only) | **your files:** `cdp_api_key.json`, `settings.env` |
 | `/DATA/AppData/neatbase/data` | `/data` | candle cache, champion, population checkpoint, trades, web password hash |
 
-Set `CONFIG_PATH` / `DATA_PATH` to use other folders on non-ZimaOS hosts.
-
 ## Config folder: API keys and settings
 
-Your secrets never go in `docker-compose.yml`. Put them in the config folder on the
+Your secrets never go in `compose.yaml`. Put them in the config folder on the
 host:
 
 ```sh
 mkdir -p /DATA/AppData/neatbase/config
 cp ~/Downloads/cdp_api_key.json /DATA/AppData/neatbase/config/   # the file Coinbase gave you
 chmod 600 /DATA/AppData/neatbase/config/cdp_api_key.json
-docker compose restart
+docker restart neatbase-trainer neatbase-trader
 ```
 
 - **`cdp_api_key.json`** is the JSON file you download when you create a key at
@@ -106,9 +101,10 @@ docker compose restart
   `"privateKey"`. Both ECDSA and Ed25519 keys work. See `config/cdp_api_key.json.example`.
   Give the key **View + Trade** permissions only, never Transfer.
 - **`settings.env`** is optional. Any setting from the table below goes here as `KEY=value`
-  lines, and it overrides the compose file and `.env`. See `config/settings.env.example`.
+  lines, and it overrides the app's environment variables. See `config/settings.env.example`.
 
-Both files are only read at startup, so run `docker compose restart` after editing.
+Both files are only read at startup, so restart the app after editing (ZimaOS app menu →
+Restart, or `docker restart neatbase-trainer neatbase-trader`).
 When a key is loaded, the dashboard header shows its last 6 characters, and your
 **real Coinbase fee tier** is used for training and paper trading. A key alone never
 enables live trading.
@@ -131,19 +127,19 @@ enables live trading.
 ## Useful commands
 
 ```sh
-docker compose logs -f trainer           # watch evolution
-docker compose logs -f trader            # every decision, fill and fee
+docker logs -f neatbase-trainer          # watch evolution
+docker logs -f neatbase-trader           # every decision, fill and fee
 touch /DATA/AppData/neatbase/data/STOP   # same as the Pause button: sell at the next candle, stop buying
 rm /DATA/AppData/neatbase/data/STOP      # resume
-docker compose down && rm /DATA/AppData/neatbase/data/trader.db*   # restart paper trading from scratch
+docker stop neatbase-trader && rm /DATA/AppData/neatbase/data/trader.db* && docker start neatbase-trader  # restart paper trading
 rm /DATA/AppData/neatbase/data/{champion.pkl,population.ckpt*}     # restart evolution from scratch
 ```
 
 ## Settings
 
-Every setting can go in the compose environment, in `.env`, or in
-`config/settings.env` on the host (which wins). See `.env.example` for the full list with
-comments. The most useful ones:
+Change settings either in the ZimaOS app settings screen (environment variables) or in
+`config/settings.env` on the host, which wins over the app settings.
+`config/settings.env.example` lists all of them with comments. The most useful ones:
 
 | Variable | Default | |
 |---|---|---|
@@ -172,7 +168,8 @@ dashboard exists because training results look much better than they really are.
    LIVE_MAX_USD=50          # the bot never manages more than this
    HALT_DRAWDOWN_PCT=25     # flatten and stop if equity drops this far from its peak
    ```
-3. `docker compose restart`. The dashboard badge turns red and says **LIVE**.
+3. Restart the app (ZimaOS app menu → Restart, or `docker restart neatbase-trader`). The
+   dashboard badge turns red and says **LIVE**.
 
 In live mode the bot places market orders through the official `coinbase-advanced-py`
 SDK. It records the real fill price and fees from Coinbase, and only trades its own

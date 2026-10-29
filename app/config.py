@@ -1,6 +1,6 @@
 """All runtime settings. Each one is read from, in order of precedence:
 1. CONFIG_DIR/settings.env on the host (optional, KEY=VALUE lines)
-2. environment variables (docker-compose.yml / .env)
+2. environment variables (compose.yaml / the ZimaOS app settings screen)
 3. the defaults below
 Coinbase API keys are read from CONFIG_DIR/cdp_api_key.json (see README)."""
 import json

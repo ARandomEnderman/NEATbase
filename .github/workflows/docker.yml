@@ -2,7 +2,7 @@ name: Build image
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/inspiring-dijkstra-edx9hj]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -27,7 +27,7 @@ jobs:
         with:
           images: ghcr.io/arandomenderman/neatbase
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
             type=ref,event=tag
             type=sha,format=short
       - uses: docker/build-push-action@v6

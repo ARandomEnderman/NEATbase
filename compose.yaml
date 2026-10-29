@@ -1,0 +1,108 @@
+# NEATbase for ZimaOS: App Store -> "+" -> Install a customized app -> Import -> upload this file.
+# Paper trading by default. Web UI on port 8080 (LAN + Tailscale only, password set on first visit).
+#
+# Your files go in /DATA/AppData/neatbase/config on the host (never in this file):
+#   cdp_api_key.json  - the API key file Coinbase gives you (optional; enables your real fee tier)
+#   settings.env      - optional KEY=value overrides of anything below, e.g. TRADING_MODE=live
+name: neatbase
+
+services:
+  trainer:
+    image: ghcr.io/arandomenderman/neatbase:latest
+    container_name: neatbase-trainer
+    command: ["python", "-m", "app.trainer"]
+    restart: unless-stopped
+    cpus: 2
+    environment:
+      PRODUCT_ID: BTC-USD
+      GRANULARITY: "3600"
+      TAKER_FEE: "0.012"
+      SLIPPAGE_BPS: "5"
+      SPREAD_BPS: "2"
+      TRAIN_DAYS: "60"
+      VALIDATION_DAYS: "14"
+      GENERATIONS_PER_CYCLE: "100"
+      RETRAIN_INTERVAL_HOURS: "3"
+      POP_SIZE: "150"
+      NUM_WORKERS: "2"
+      TZ: UTC
+    volumes:
+      - /DATA/AppData/neatbase/data:/data
+      - /DATA/AppData/neatbase/config:/config:ro
+    x-casaos:
+      envs:
+        - container: PRODUCT_ID
+          description: {en_us: "Coinbase spot pair to trade, e.g. BTC-USD, ETH-USD"}
+        - container: GRANULARITY
+          description: {en_us: "Candle size in seconds (300, 900, 3600, 21600, ...)"}
+        - container: TAKER_FEE
+          description: {en_us: "Fee per fill when no API key is loaded (0.012 = 1.2%)"}
+        - container: NUM_WORKERS
+          description: {en_us: "CPU cores used for training"}
+      volumes:
+        - container: /data
+          description: {en_us: "Candle cache, trained networks, trades, web password"}
+        - container: /config
+          description: {en_us: "Put cdp_api_key.json and optional settings.env here"}
+
+  trader:
+    image: ghcr.io/arandomenderman/neatbase:latest
+    container_name: neatbase-trader
+    command: ["python", "-m", "app.trader"]
+    restart: unless-stopped
+    depends_on:
+      - trainer
+    ports:
+      - target: 8080
+        published: "8080"
+        protocol: tcp
+    environment:
+      PRODUCT_ID: BTC-USD
+      GRANULARITY: "3600"
+      TAKER_FEE: "0.012"
+      SLIPPAGE_BPS: "5"
+      TRADING_MODE: paper
+      PAPER_START_USD: "1000"
+      LIVE_MAX_USD: "50"
+      HALT_DRAWDOWN_PCT: "25"
+      ALLOWED_NETWORKS: "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,100.64.0.0/10,::1/128,fc00::/7,fe80::/10"
+      TZ: UTC
+    volumes:
+      - /DATA/AppData/neatbase/data:/data
+      - /DATA/AppData/neatbase/config:/config:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    x-casaos:
+      envs:
+        - container: TRADING_MODE
+          description: {en_us: "paper or live (live also needs LIVE_CONFIRM in config/settings.env)"}
+        - container: PAPER_START_USD
+          description: {en_us: "Starting paper balance in USD"}
+        - container: LIVE_MAX_USD
+          description: {en_us: "Live mode: most USD the bot will ever manage"}
+        - container: ALLOWED_NETWORKS
+          description: {en_us: "Networks allowed to open the web UI (LAN + Tailscale)"}
+      ports:
+        - container: "8080"
+          description: {en_us: "Web UI"}
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: trader
+  index: /
+  port_map: "8080"
+  scheme: http
+  author: ARandomEnderman
+  developer: ARandomEnderman
+  category: Finance
+  title:
+    en_us: NEATbase
+  tagline:
+    en_us: NEAT neuroevolution paper trader on live Coinbase data
+  description:
+    en_us: Evolves NEAT neural networks on Coinbase candles and paper trades the best one live, with taker fees, spread and slippage included.
