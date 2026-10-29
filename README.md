@@ -206,7 +206,7 @@ Change settings either in the ZimaOS app settings screen (environment variables)
 | `SLIPPAGE_BPS` / `SPREAD_BPS` | `5` / `2` | extra execution costs |
 | `TRAIN_DAYS` / `VALIDATION_DAYS` | `90` / `14` | training and held-out windows |
 | `PROBATION_DAYS` | `7` | forward test on unseen data before a new network may trade |
-| `POP_SIZE`, `GENERATIONS_PER_CYCLE` | `150`, `100` | evolution size |
+| `POP_SIZE`, `GENERATIONS_PER_CYCLE` | `150`, `30` | evolution size; 30 generations overfit less than 100 in walk-forward tests |
 | `NUM_WORKERS` | `0` | CPU cores for training, `0` = all. The trainer runs at low priority (`nice 10`), so other apps go first. |
 | `PAPER_START_USD` | `1000` | starting paper balance |
 
@@ -238,27 +238,55 @@ modes.
 > This is an experiment, not financial advice. Automated trading can lose money quickly,
 > and a strategy that worked in paper trading can fail live.
 
-## Comparing settings (e.g. candle size)
+## Comparing settings (walk-forward test)
 
-`app/compare.py` trains several fresh populations per candle size on the same history,
-then scores each one on later data that training never saw. It uses the bot's fees,
-order rules and sizing. You can run it on any machine with Docker; more cores make it
-faster:
+`app/compare.py` measures whether a setting helps on data that training never saw. It
+uses the bot's own fees, order rules and sizing. It first holds back the last 30 days
+(the *lockbox*). Before that it lays out several 30-day test months. For each month,
+fresh populations are trained only on the 90 days before it, then scored on that month.
+The score is **unseen alpha**: return beyond holding the same average amount.
 
 ```sh
 docker run --rm -v neatbase-compare:/data ghcr.io/arandomenderman/neatbase:latest \
-    python -m app.compare --granularities 3600,7200,21600 --runs 3 --generations 100
+    python -m app.compare --folds 6 --runs 2
 ```
 
 Options:
-- `--runs`: independent training runs per candle size
-- `--train-days` / `--val-days`: how much history to train on and to test on (default 90 / 30)
-- `--pop`: population size
-- `--workers`: CPU cores to use (default: all)
+- `--granularities 3600,21600`: compare candle sizes
+- `--folds` / `--fold-days`: number and length of test months (default 6 × 30 days)
+- `--runs`: independent trainings per month
+- `--ensemble N`: N populations that average their outputs
+- `--generations`, `--pop`, `--train-days`, `--workers`
 
-You can also pass any setting with `-e`, for example `-e ORDER_TYPE=taker` or
-`-e MAX_POSITION_FRACTION=1.0`. The volume caches downloaded candles between runs.
-Judge the results by the *unseen* and *worst run* columns, not *train*.
+You can also pass any bot setting with `-e`, for example `-e FEATURES=cross`,
+`-e ORDER_TYPE=taker` or `-e COMPLEXITY_PENALTY=0.3`.
+
+Run `--final` **once**, after you've finished trying settings. It scores the lockbox. If
+the lockbox result is much worse than the test months, your settings were tuned to
+those months rather than learning something general.
+
+### What the tests found so far
+
+These are mean unseen alpha over 6 test months (Apr–Sep 2026), BTC/ETH/SOL, 1h candles
+unless noted. "Months > 0" counts the months with positive alpha.
+
+| Setting | Mean alpha | Months > 0 |
+|---|---|---|
+| default (100 generations at the time) | −0.80 | 2/6 |
+| **30 generations** (now the default) | **−0.23** | 2/6 |
+| cross-coin inputs | −1.06 | 3/6 |
+| 180 training days | −0.96 | 1/6 |
+| complexity penalty 0.3 | −0.50 | 0/6 |
+| 6h candles | −0.99 | 2/6 |
+| ensemble of 5 | −0.30 | 0/6 |
+| 0.25% / 0.5% fees | −0.94 | 2/6 |
+| **no fees at all** | **+0.53** | 4/6 |
+| simple trend rules (no NEAT) | −2 to −10 | |
+| lockbox (Sep 29 – Oct 29), `--final` | −0.94 | 0/1 |
+
+So far nothing shows timing skill after fees, and even without fees the signal is only
+about +0.5 per month. The bot mostly limits losses to about its fees. The forward-test
+probation keeps networks without skill from taking over.
 
 ## Development
 

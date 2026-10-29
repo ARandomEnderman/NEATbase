@@ -44,7 +44,7 @@ def main():
     ap.add_argument("--final", action="store_true", help="score the lockbox instead (do this once, at the end)")
     ap.add_argument("--runs", type=int, default=2, help="independent training runs per test month")
     ap.add_argument("--ensemble", type=int, default=1, help="independent populations voting per run")
-    ap.add_argument("--generations", type=int, default=100)
+    ap.add_argument("--generations", type=int, default=config.GENERATIONS_PER_CYCLE)
     ap.add_argument("--pop", type=int, default=config.POP_SIZE)
     ap.add_argument("--train-days", type=float, default=config.TRAIN_DAYS)
     ap.add_argument("--workers", type=int, default=0, help="CPU cores to use, 0 = all")
