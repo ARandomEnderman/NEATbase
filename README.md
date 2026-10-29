@@ -231,6 +231,28 @@ modes.
 > This is an experiment, not financial advice. Automated trading can lose money quickly,
 > and a strategy that worked in paper trading can fail live.
 
+## Comparing settings (e.g. candle size)
+
+`app/compare.py` trains several fresh populations per candle size on the same history,
+then scores each one on later data that training never saw. It uses the bot's fees,
+order rules and sizing. You can run it on any machine with Docker; more cores make it
+faster:
+
+```sh
+docker run --rm -v neatbase-compare:/data ghcr.io/arandomenderman/neatbase:latest \
+    python -m app.compare --granularities 3600,7200,21600 --runs 3 --generations 100
+```
+
+Options:
+- `--runs`: independent training runs per candle size
+- `--train-days` / `--val-days`: how much history to train on and to test on (default 90 / 30)
+- `--pop`: population size
+- `--workers`: CPU cores to use (default: all)
+
+You can also pass any setting with `-e`, for example `-e ORDER_TYPE=taker` or
+`-e MAX_POSITION_FRACTION=1.0`. The volume caches downloaded candles between runs.
+Judge the results by the *unseen* and *worst run* columns, not *train*.
+
 ## Development
 
 ```sh
