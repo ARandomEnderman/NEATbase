@@ -1,0 +1,79 @@
+# NEATbase: NEAT neuroevolution trader on live Coinbase data.
+# Paper trading by default. Every setting below can be changed here, in a .env
+# file next to this one, or in the ZimaOS app settings screen.
+name: neatbase
+
+x-env: &env
+  PRODUCT_ID: ${PRODUCT_ID:-BTC-USD}
+  GRANULARITY: ${GRANULARITY:-3600}            # seconds per candle
+  TAKER_FEE: ${TAKER_FEE:-0.012}              # 1.20% = Coinbase lowest tier
+  SLIPPAGE_BPS: ${SLIPPAGE_BPS:-5}
+  SPREAD_BPS: ${SPREAD_BPS:-2}
+  POSITION_FRACTION: ${POSITION_FRACTION:-1.0}
+  BUY_THRESHOLD: ${BUY_THRESHOLD:-0.2}
+  SELL_THRESHOLD: ${SELL_THRESHOLD:--0.2}
+  # Optional: with keys set, your real Coinbase fee tier is used everywhere.
+  COINBASE_API_KEY: ${COINBASE_API_KEY:-}
+  COINBASE_API_SECRET: ${COINBASE_API_SECRET:-}
+  TZ: ${TZ:-UTC}
+
+x-app: &app
+  image: ghcr.io/arandomenderman/neatbase:latest
+  build: .
+  restart: unless-stopped
+  volumes:
+    - ${DATA_PATH:-/DATA/AppData/neatbase}:/data
+
+services:
+  trainer:
+    <<: *app
+    container_name: neatbase-trainer
+    command: ["python", "-m", "app.trainer"]
+    cpus: ${TRAINER_CPUS:-2}
+    environment:
+      <<: *env
+      TRAIN_DAYS: ${TRAIN_DAYS:-60}
+      VALIDATION_DAYS: ${VALIDATION_DAYS:-14}
+      GENERATIONS_PER_CYCLE: ${GENERATIONS_PER_CYCLE:-100}
+      RETRAIN_INTERVAL_HOURS: ${RETRAIN_INTERVAL_HOURS:-3}
+      POP_SIZE: ${POP_SIZE:-150}
+      NUM_WORKERS: ${NUM_WORKERS:-2}
+      FITNESS_CHUNKS: ${FITNESS_CHUNKS:-4}
+      DRAWDOWN_PENALTY: ${DRAWDOWN_PENALTY:-0.5}
+      INACTIVITY_PENALTY: ${INACTIVITY_PENALTY:-0.25}
+
+  trader:
+    <<: *app
+    container_name: neatbase-trader
+    command: ["python", "-m", "app.trader"]
+    depends_on: [trainer]
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    environment:
+      <<: *env
+      TRADING_MODE: ${TRADING_MODE:-paper}        # paper | live
+      PAPER_START_USD: ${PAPER_START_USD:-1000}
+      # Live trading only:
+      LIVE_CONFIRM: ${LIVE_CONFIRM:-}             # I_UNDERSTAND_THIS_USES_REAL_MONEY
+      LIVE_MAX_USD: ${LIVE_MAX_USD:-50}
+      HALT_DRAWDOWN_PCT: ${HALT_DRAWDOWN_PCT:-25}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/summary', timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+x-casaos:
+  architectures: [amd64, arm64]
+  main: trader
+  author: ARandomEnderman
+  developer: ARandomEnderman
+  category: Finance
+  index: /
+  port_map: "8080"
+  title:
+    en_us: NEATbase
+  tagline:
+    en_us: NEAT neuroevolution paper trader on live Coinbase data
+  description:
+    en_us: Evolves NEAT neural networks on Coinbase candles and paper trades the best one live, with taker fees, spread and slippage included.

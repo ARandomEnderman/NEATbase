@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEATbase</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #6b7280; --border: #e5e7eb;
+    --pos: #0f9d58; --neg: #d93025; --accent: #2563eb; --bench: #9ca3af;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #181b21; --text: #e8eaed; --muted: #9aa0a6; --border: #2a2e36;
+      --pos: #34c77b; --neg: #ff6b5e; --accent: #6ea8ff; --bench: #6b7280;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 14px; margin: 0 0 12px; color: var(--muted); font-weight: 600;
+       text-transform: uppercase; letter-spacing: .04em; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600;
+           border: 1px solid var(--border); }
+  .badge.live { background: var(--neg); color: #fff; border-color: var(--neg); }
+  .muted { color: var(--muted); }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .stat .label { color: var(--muted); font-size: 12px; }
+  .stat .value { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat .sub { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .pos { color: var(--pos); } .neg { color: var(--neg); }
+  section { margin-top: 16px; }
+  .chart { position: relative; height: 300px; }
+  .two { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .notice { padding: 10px 14px; border-radius: 8px; border: 1px solid var(--neg); color: var(--neg); margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>NEATbase</h1>
+    <span id="mode" class="badge">…</span>
+    <span id="meta" class="muted"></span>
+  </header>
+  <div id="notices"></div>
+
+  <div class="grid" id="stats"></div>
+
+  <section class="card">
+    <h2>Equity vs buy &amp; hold (after all fees)</h2>
+    <div class="chart"><canvas id="equityChart"></canvas></div>
+  </section>
+
+  <section class="two">
+    <div class="card">
+      <h2>Training fitness per generation</h2>
+      <div class="chart"><canvas id="fitChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Latest candidate on held-out validation data</h2>
+      <div class="chart"><canvas id="valChart"></canvas></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Trades</h2>
+    <div class="scroll"><table id="trades"></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Training cycles</h2>
+    <div class="scroll"><table id="runs"></table></div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const usd = v => v == null ? "–" : "$" + v.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const pct = v => v == null ? "–" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+const cls = v => v == null ? "" : v >= 0 ? "pos" : "neg";
+const ts = t => new Date(t * 1000).toLocaleString();
+const charts = {};
+
+function lineChart(id, datasets, labels) {
+  const grid = css("--border"), text = css("--muted");
+  if (charts[id]) {
+    charts[id].data.labels = labels;
+    charts[id].data.datasets.forEach((d, i) => d.data = datasets[i].data);
+    charts[id].update("none");
+    return;
+  }
+  charts[id] = new Chart($(id), {
+    type: "line",
+    data: {labels, datasets: datasets.map(d => ({pointRadius: 0, borderWidth: 2, tension: 0, ...d}))},
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: {mode: "index", intersect: false},
+      scales: {x: {ticks: {color: text, maxTicksLimit: 8}, grid: {color: grid}},
+               y: {ticks: {color: text}, grid: {color: grid}}},
+      plugins: {legend: {labels: {color: text, boxWidth: 12}}},
+    },
+  });
+}
+
+function stat(label, value, sub, klass = "") {
+  return `<div class="card stat"><div class="label">${label}</div>
+    <div class="value ${klass}">${value}</div><div class="sub">${sub || "&nbsp;"}</div></div>`;
+}
+
+async function refresh() {
+  const [s, eq, tr, trn] = await Promise.all(
+    ["summary", "equity", "trades", "training"].map(p => fetch("api/" + p).then(r => r.json())));
+
+  $("mode").textContent = (s.mode || "paper").toUpperCase();
+  $("mode").className = "badge" + (s.mode === "live" ? " live" : "");
+  const notices = [];
+  if (s.halted) notices.push("Trading halted: drawdown limit reached.");
+  if (s.stop_file) notices.push("STOP file present: no new buys, position will be closed.");
+  $("notices").innerHTML = notices.map(n => `<div class="notice">${n}</div>`).join("");
+
+  if (!s.ready) {
+    $("meta").textContent = `${s.product} · waiting for the trainer's first champion…`;
+  } else {
+    $("meta").textContent = `${s.product} · ${s.granularity / 60}m candles · taker fee ${(s.taker_fee * 100).toFixed(2)}% · slippage ${s.slippage_bps}bps · since ${ts(s.started_at)}` +
+      (s.last_update ? ` · updated ${ts(s.last_update)}` : "");
+    const c = s.champion || {};
+    $("stats").innerHTML = [
+      stat("Equity", usd(s.equity), `started ${usd(s.start_equity)}`),
+      stat("Bot return", pct(s.return_pct), "after fees & slippage", cls(s.return_pct)),
+      stat("Buy &amp; hold", pct(s.benchmark_pct), "same fees", cls(s.benchmark_pct)),
+      stat("Fees paid", usd(s.fees_paid), `${s.fills} fills`),
+      stat("Round trips", s.round_trips, s.win_rate == null ? "" : `win rate ${(s.win_rate * 100).toFixed(0)}%`),
+      stat("Max drawdown", s.max_drawdown_pct.toFixed(2) + "%", "from peak equity", s.max_drawdown_pct > 0 ? "neg" : ""),
+      stat("Position", s.in_position ? "LONG" : "CASH", s.in_position ? `${s.qty.toFixed(8)} @ ${usd(s.last_price)}` : usd(s.cash)),
+      stat("Last signal", s.last_output == null ? "–" : s.last_output.toFixed(3), c.generation != null ? `champion gen ${c.generation} · ${c.nodes}n/${c.conns}c` : ""),
+    ].join("");
+  }
+
+  lineChart("equityChart", [
+    {label: "NEAT bot", data: eq.map(r => r.equity), borderColor: css("--accent")},
+    {label: "Buy & hold", data: eq.map(r => r.benchmark), borderColor: css("--bench"), borderDash: [4, 3]},
+  ], eq.map(r => new Date(r.ts * 1000).toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"})));
+
+  const g = trn.generations;
+  lineChart("fitChart", [
+    {label: "Best", data: g.map(r => r.best), borderColor: css("--accent")},
+    {label: "Mean", data: g.map(r => r.mean), borderColor: css("--bench")},
+  ], g.map(r => r.generation));
+
+  const last = trn.runs[0];
+  if (last && last.val_curve) {
+    const vc = last.val_curve, p0 = vc[0][1];
+    lineChart("valChart", [
+      {label: `Candidate (${pct(last.validation.return_pct)} vs B&H ${pct(last.validation.buy_hold_pct)})`,
+       data: vc.map(r => 100 * (r[1] / p0 - 1)), borderColor: css("--accent")},
+    ], vc.map(r => new Date(r[0] * 1000).toLocaleDateString([], {month: "short", day: "numeric"})));
+  }
+
+  $("trades").innerHTML = "<tr><th>Time</th><th>Side</th><th>Qty</th><th>Price</th><th>Fee</th><th>Trade P&amp;L</th><th>Equity</th><th>Signal</th></tr>" +
+    (tr.length ? tr.map(t => `<tr><td>${ts(t.ts)}</td><td>${t.side.toUpperCase()}</td><td>${t.qty.toFixed(8)}</td>
+      <td>${usd(t.price)}</td><td>${usd(t.fee)}</td><td class="${cls(t.pnl)}">${t.pnl == null ? "" : usd(t.pnl)}</td>
+      <td>${usd(t.equity)}</td><td>${t.output.toFixed(3)}</td></tr>`).join("")
+      : `<tr><td colspan="8" class="muted">No trades yet. With fees this high the bot is often right to sit in cash.</td></tr>`);
+
+  $("runs").innerHTML = "<tr><th>Time</th><th>Gen</th><th>Train</th><th>Validation</th><th>Val B&amp;H</th><th>Val trades</th><th>Val fees</th><th>Val max DD</th><th>Old champ val</th><th>Promoted</th></tr>" +
+    (trn.runs.length ? trn.runs.map(r => `<tr><td>${ts(r.ts)}</td><td>${r.generation}</td>
+      <td class="${cls(r.train.return_pct)}">${pct(r.train.return_pct)}</td>
+      <td class="${cls(r.validation.return_pct)}">${pct(r.validation.return_pct)}</td>
+      <td class="${cls(r.validation.buy_hold_pct)}">${pct(r.validation.buy_hold_pct)}</td>
+      <td>${r.validation.trades}</td><td>${usd(r.validation.fees_paid)}</td>
+      <td>${r.validation.max_drawdown_pct.toFixed(2)}%</td>
+      <td>${r.champion_validation ? pct(r.champion_validation.return_pct) : "–"}</td>
+      <td>${r.promoted ? "yes" : "no"}</td></tr>`).join("")
+      : `<tr><td colspan="10" class="muted">First training cycle is running. Check <code>docker compose logs -f trainer</code>.</td></tr>`);
+}
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>
