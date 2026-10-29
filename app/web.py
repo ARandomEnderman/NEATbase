@@ -46,7 +46,8 @@ def summary():
     keys = {"api_key": _mask(config.COINBASE_API_KEY), "api_key_source": config.API_KEY_SOURCE,
             "stop_file": os.path.exists(config.KILL_SWITCH_PATH)}
     if not st:
-        return jsonify({"ready": False, "products": config.PRODUCT_IDS, "mode": config.TRADING_MODE, **keys})
+        return jsonify({"ready": False, "products": config.PRODUCT_IDS, "mode": config.TRADING_MODE,
+                        "recorder": _recorder_status(), **keys})
     s = st["session"]
     eq = _q(config.TRADER_DB, "SELECT equity, benchmark FROM equity WHERE session=? ORDER BY ts", (s,))
     trades = _q(config.TRADER_DB, "SELECT side, fee, pnl, order_type FROM trades WHERE session=?", (s,))
@@ -75,8 +76,22 @@ def summary():
                    "last_output": sl["last_output"],
                    "pending": f"{sl['pending']['side']} @ {sl['pending']['price']:g}" if sl["pending"] else None}
                   for p, sl in st["slots"].items()],
-        "champion": st.get("champion"), **keys,
+        "champion": st.get("champion"), "recorder": _recorder_status(), **keys,
     })
+
+
+def _recorder_status():
+    path = os.path.join(config.DATA_DIR, "flow.db")
+    rows = _q(path, "SELECT COUNT(*) AS minutes, MIN(minute) AS first, MAX(minute) AS last, "
+              "SUM(n_buy + n_sell) AS trades, SUM(missed_trades) AS missed FROM flow")
+    if not rows or not rows[0]["minutes"]:
+        return None
+    r = rows[0]
+    n_products = max(1, len(config.PRODUCT_IDS))
+    span = max(60, r["last"] - r["first"] + 60)
+    return {"minutes": r["minutes"], "first": r["first"], "last": r["last"], "days": span / 86400,
+            "coverage": min(1.0, r["minutes"] / n_products / (span / 60)),
+            "missed_pct": 100 * (r["missed"] or 0) / max(1, (r["trades"] or 0) + (r["missed"] or 0))}
 
 
 @app.route("/api/pause", methods=["POST"])

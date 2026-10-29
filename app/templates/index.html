@@ -213,6 +213,7 @@ async function refresh() {
   const notices = [];
   if (s.halted) notices.push("Trading halted: drawdown limit reached.");
   if (s.stop_file) notices.push("Paused: any position is sold at the next candle and no new buys are made.");
+  if (s.recorder && Date.now() / 1000 - s.recorder.last > 300) notices.push("The order-flow recorder hasn't written data for over 5 minutes. Check the neatbase-recorder container.");
   if (s.mode === "live" && !s.api_key) notices.push("Live mode but no API key loaded. Add cdp_api_key.json to the config folder.");
   $("pause").textContent = s.stop_file ? "Resume" : "Pause";
   $("pause").className = s.stop_file ? "warn" : "";
@@ -226,7 +227,7 @@ async function refresh() {
       ? `maker orders ${(s.maker_fee * 100).toFixed(2)}% (market fallback ${(s.taker_fee * 100).toFixed(2)}%)`
       : `market orders ${(s.taker_fee * 100).toFixed(2)}%`;
     $("meta").textContent = `${s.granularity / 60}m candles · ${feeInfo} · slippage ${s.slippage_bps}bps · max ${Math.round(s.max_position_fraction * 100)}% invested · since ${ts(s.started_at)}` +
-      (s.last_update ? ` · updated ${ts(s.last_update)}` : "") + keyInfo(s);
+      (s.last_update ? ` · updated ${ts(s.last_update)}` : "") + keyInfo(s) + recorderInfo(s);
     const c = s.champion || {};
     $("stats").innerHTML = [
       stat("Equity", usd(s.equity), `started ${usd(s.start_equity)}`),
@@ -300,6 +301,13 @@ async function refresh() {
       <td>${r.champion_validation ? pct(r.champion_validation.return_pct) : "–"}</td>
       <td style="text-align:left">${r.status || (r.promoted ? "promoted" : "")}</td></tr>`).join("")
       : `<tr><td colspan="11" class="muted">First training cycle is running. Check <code>docker logs -f neatbase-trainer</code>.</td></tr>`);
+}
+
+function recorderInfo(s) {
+  const r = s.recorder;
+  if (!r) return " · recorder: no data yet";
+  const stale = Date.now() / 1000 - r.last > 300 ? " (STOPPED?)" : "";
+  return ` · order-flow recorder: ${r.days.toFixed(1)} days, ${Math.round(r.coverage * 100)}% coverage${stale}`;
 }
 
 function keyInfo(s) {

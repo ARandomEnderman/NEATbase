@@ -288,6 +288,45 @@ So far nothing shows timing skill after fees, and even without fees the signal i
 about +0.5 per month. The bot mostly limits losses to about its fees. The forward-test
 probation keeps networks without skill from taking over.
 
+## Order-flow recorder (new data for future training)
+
+The tests above suggest that hourly candles barely predict the next hour. Coinbase's
+order flow and order book carry different information: who is buying or selling
+aggressively, and how much is waiting on each side. Coinbase keeps no history of
+these, so the `recorder` service records them from now on. It uses Coinbase's public
+WebSocket (no key needed) and stores one row per coin per minute in `data/flow.db`
+(a few MB per month).
+
+Each minute it stores:
+- **aggressor flow:** volume, dollar amount and trade count of aggressive buys vs
+  aggressive sells, the largest trade, VWAP, and how many trades were missed (detected
+  from gaps in Coinbase's trade IDs)
+- **order book,** sampled every 5 seconds and averaged over the minute: spread, bid vs
+  ask imbalance within 0.1%, 0.5% and 1% of the price, dollar depth within 1%, and the
+  microprice
+
+Coinbase's trade `side` field is the side of the **resting** order. The recorder flips
+it, so "buy" means an aggressive buyer, which is the useful signal. This was checked
+against the live order book: "BUY" prints happen at the bid.
+
+The dashboard header shows how many days have been recorded and the coverage. Once
+there's about a week of data, check whether any of it predicts returns:
+
+```sh
+docker run --rm -v /DATA/AppData/neatbase/data:/data ghcr.io/arandomenderman/neatbase:latest \
+    python -m app.flowcheck
+```
+
+It reports, for each flow and book value:
+- **IC:** the rank correlation with the next 1 and 4 hours' returns
+- **t-stat:** whether the IC is distinguishable from zero
+- **stability:** whether the IC keeps its sign in the first and second half of the data
+- **top-vs-bottom-20% return spread,** compared with the round-trip fee
+
+A value that is consistent in both halves with |t| > 3 is worth adding to the
+network's inputs. A first look needs about a week of data, and a real answer about a
+month.
+
 ## Development
 
 ```sh
