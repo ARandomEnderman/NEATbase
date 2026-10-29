@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEATbase</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #6b7280; --border: #e5e7eb;
+    --neg: #d93025; --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #181b21; --text: #e8eaed; --muted: #9aa0a6; --border: #2a2e36;
+      --neg: #ff6b5e; --accent: #6ea8ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+         background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  .card { width: 100%; max-width: 360px; background: var(--card); border: 1px solid var(--border);
+          border-radius: 12px; padding: 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { margin: 0 0 18px; color: var(--muted); }
+  label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 12px 0 4px; }
+  input { width: 100%; font: inherit; padding: 9px 10px; border-radius: 8px;
+          border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button { width: 100%; margin-top: 18px; font: inherit; font-weight: 600; padding: 10px; border: 0;
+           border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; }
+  .error { color: var(--neg); margin: 12px 0 0; }
+  a { color: var(--muted); display: block; text-align: center; margin-top: 14px; }
+</style>
+</head>
+<body>
+<form class="card" method="post" action="{{ {'setup': url_for('setup'), 'login': url_for('login'), 'change': url_for('change_password')}[mode] }}">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <h1>NEATbase</h1>
+  {% if mode == 'setup' %}
+    <p>First run: choose a password for this dashboard.</p>
+    <label for="password">New password</label>
+    <input id="password" name="password" type="password" minlength="8" autocomplete="new-password" required autofocus>
+    <label for="confirm">Confirm password</label>
+    <input id="confirm" name="confirm" type="password" minlength="8" autocomplete="new-password" required>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <button>Create password</button>
+  {% elif mode == 'login' %}
+    <p>Sign in to continue.</p>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <button>Sign in</button>
+  {% else %}
+    <p>Change password. Other signed-in browsers will be signed out.</p>
+    <label for="current">Current password</label>
+    <input id="current" name="current" type="password" autocomplete="current-password" required autofocus>
+    <label for="password">New password</label>
+    <input id="password" name="password" type="password" minlength="8" autocomplete="new-password" required>
+    <label for="confirm">Confirm new password</label>
+    <input id="confirm" name="confirm" type="password" minlength="8" autocomplete="new-password" required>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <button>Change password</button>
+    <a href="{{ url_for('index') }}">Back to dashboard</a>
+  {% endif %}
+</form>
+</body>
+</html>
