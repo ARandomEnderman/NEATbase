@@ -2,7 +2,8 @@
 
 A small, self-hosted NEAT (NeuroEvolution of Augmenting Topologies) crypto trader for
 Coinbase. It evolves neural networks on real Coinbase candles and **paper trades** the
-best one on the live market. Every simulated fill pays Coinbase's fees. It runs as a
+best one on the live market, across several coins at once. Every simulated fill pays
+Coinbase's fees. It runs as a
 two-container Docker Compose app and is built for ZimaOS.
 
 ```
@@ -16,29 +17,64 @@ two-container Docker Compose app and is built for ZimaOS.
 
 ## What it does
 
-- **Trainer:** downloads the last `TRAIN_DAYS + VALIDATION_DAYS` of candles and caches
-  them in SQLite. It then evolves a population of networks for `GENERATIONS_PER_CYCLE`
-  generations on the training window. The best network is tested on the most recent
-  `VALIDATION_DAYS`, which it never trained on. It is promoted to *champion* only if it
-  beats the current champion on that same held-out data. The population is checkpointed
-  and keeps evolving on fresh data every `RETRAIN_INTERVAL_HOURS`.
-- **Trader:** at every candle close it feeds the champion the same 16 inputs used in
-  training: volatility-normalised returns, RSI, EMA trend, volume, range, time of day, and
-  position / unrealised P&L / bars held. It buys or sells against the **real live order
-  book**. It also tracks a buy & hold benchmark that pays the same fees.
-- **Web UI** on port 8080: shows equity vs buy & hold, fees paid, win rate, drawdown,
-  trades, fitness per generation, and each candidate's validation curve. It has a
-  Pause/Resume switch and is password protected. Only local networks can reach it
-  (see below).
+- **Trainer:** downloads and caches candles for every coin in `PRODUCT_IDS` (BTC, ETH and
+  SOL by default). It evolves **one shared network** on all of them over the last
+  `TRAIN_DAYS` (90) days. Each coin's backtest has its own pot of money, and the network's
+  score is the average across coins, which rewards strategies that work on more than
+  one coin. The population is checkpointed and keeps evolving every
+  `RETRAIN_INTERVAL_HOURS`.
+- **Two-stage promotion,** so lucky or overfitted networks don't get to trade:
+  1. **Validation:** the cycle's best network must beat the champion on the last
+     `VALIDATION_DAYS` (14), which it never trained on. If it does, it becomes a
+     *challenger*. At most one challenger is kept per day (the best one).
+  2. **Probation:** a challenger is promoted only if it also beats the champion over the
+     next `PROBATION_DAYS` (7) of data that **didn't exist yet** when it was created.
+     Each challenger gets exactly one forward test and is discarded if it loses, so no
+     amount of retrying lets luck through.
+  The very first network has nothing to compete against, so it becomes champion
+  straight away; every later one goes through both stages.
+- **Trader:** at every candle close it feeds the champion 20 inputs for each coin:
+  - returns over 1/4/16/64 candles and over one week
+  - RSI
+  - EMA20/50 trend and the distance from EMA200
+  - volatility regime
+  - volume
+  - position in its 20-candle and one-week ranges
+  - candle body
+  - time of day
+  - the position (held or not, P&L after fees, how long it's been held)
+  - **its own previous output**, a one-step memory
+
+  Each coin trades its own equal share of the money, never all-in on one coin. It also
+  tracks a buy & hold benchmark that pays the same fees.
+- **Web UI** on port 8080 shows:
+  - a price chart per coin with every buy ▲ and sell ▼ marked (size = dollars traded,
+    hover for amount, fee and P&L)
+  - equity vs buy & hold, fees, win rate and drawdown
+  - the probation queue, training fitness and validation curves
+
+  It has a Pause/Resume switch, is password protected, and only local networks can
+  reach it (see below).
 
 ### Costs included in the simulation
 
 Training and paper trading use the same cost model (`app/sim.py`). That way a network
 can't learn a strategy that only works without fees.
 
+**Orders.** By default (`ORDER_TYPE=maker`) the bot places post-only limit orders at the
+best bid (to buy) or best ask (to sell) when a candle closes. These pay the **maker fee:
+0.60%** instead of the 1.20% taker fee. An order counts as filled only if the **next**
+candle trades *through* the limit price; just touching it is not enough. Unfilled
+orders are cancelled. A sell that stays unfilled for `MAKER_SELL_FALLBACK_BARS` (2)
+candles in a row becomes a market sell, so the bot can't get stuck in a falling coin.
+The Pause button and the drawdown halt always use market orders. Training, paper
+trading and live trading all follow these same rules. Set `ORDER_TYPE=taker` to only
+use market orders.
+
 | Cost | Training (backtest) | Paper trading (live) |
 |---|---|---|
-| Taker fee, charged on both buy and sell | `TAKER_FEE`, default 1.20% (Coinbase's lowest volume tier) | same |
+| Maker fee (limit orders) | `MAKER_FEE`, default 0.60% | same; fill needs a trade through the limit on the next candle |
+| Taker fee (market orders, sell fallback) | `TAKER_FEE`, default 1.20% (Coinbase's lowest volume tier) | same |
 | Spread | max(`SPREAD_BPS`, live spread when the cycle starts) | real bid/ask from the order book |
 | Market impact | — | the order is walked through the order book levels |
 | Slippage / latency | `SLIPPAGE_BPS` per fill | `SLIPPAGE_BPS` per fill |
@@ -48,8 +84,9 @@ can't learn a strategy that only works without fees.
 If you add Coinbase API keys, both containers read your **real fee tier** from
 Coinbase, even in paper mode.
 
-A full round trip at the default tier costs about **2.5%**. Most short-term strategies
-can't overcome that, which is why the default is 1-hour candles. Expect the bot to spend
+A round trip costs about **1.2%** with maker orders and about **2.5%** with market
+orders. Most short-term strategies can't overcome that, which is why the default is
+1-hour candles. Expect the bot to spend
 a lot of time in cash. When that happens it's usually the right call, not a bug. Compare
 it against the buy & hold line, not against zero.
 
@@ -143,13 +180,15 @@ Change settings either in the ZimaOS app settings screen (environment variables)
 
 | Variable | Default | |
 |---|---|---|
-| `PRODUCT_ID` | `BTC-USD` | any Coinbase spot pair |
+| `PRODUCT_IDS` | `BTC-USD,ETH-USD,SOL-USD` | coins to trade, one shared network, equal pot each |
+| `ORDER_TYPE` | `maker` | `maker` = limit orders at 0.60%, `taker` = market orders at 1.20% |
 | `GRANULARITY` | `3600` | candle size in seconds (60, 300, 900, 1800, 3600, 7200, 21600, 86400) |
-| `TAKER_FEE` | `0.012` | your fee tier (ignored when API keys are set) |
+| `TAKER_FEE` / `MAKER_FEE` | `0.012` / `0.006` | your fee tier (ignored when an API key is loaded) |
 | `SLIPPAGE_BPS` / `SPREAD_BPS` | `5` / `2` | extra execution costs |
-| `TRAIN_DAYS` / `VALIDATION_DAYS` | `60` / `14` | training and held-out windows |
+| `TRAIN_DAYS` / `VALIDATION_DAYS` | `90` / `14` | training and held-out windows |
+| `PROBATION_DAYS` | `7` | forward test on unseen data before a new network may trade |
 | `POP_SIZE`, `GENERATIONS_PER_CYCLE` | `150`, `100` | evolution size |
-| `TRAINER_CPUS`, `NUM_WORKERS` | `2`, `2` | how much of the server the trainer may use |
+| `NUM_WORKERS` | `0` | CPU cores for training, `0` = all. The trainer runs at low priority (`nice 10`), so other apps go first. |
 | `PAPER_START_USD` | `1000` | starting paper balance |
 
 ## Going live (real money)

@@ -3,9 +3,9 @@ import math
 
 import numpy as np
 
-WARMUP = 200  # bars needed before indicators are meaningful
-N_MARKET = 13
-N_POSITION = 3
+WARMUP = 300  # bars needed before indicators are meaningful (EMA200 has settled)
+N_MARKET = 16
+N_POSITION = 4
 N_INPUTS = N_MARKET + N_POSITION
 
 
@@ -49,6 +49,7 @@ def market_features(candles, granularity):
     vol20 = np.maximum(_rolling(lr, 20, np.std), 1e-6)
     vol100 = np.maximum(_rolling(lr, 100, np.std), 1e-6)
 
+    week = max(2, round(7 * 86400 / granularity))  # one week of bars, for longer-range context
     f = np.zeros((n, N_MARKET))
     for j, k in enumerate((1, 4, 16, 64)):
         past = np.concatenate([np.full(k, logc[0]), logc[:-k]])
@@ -68,10 +69,17 @@ def market_features(candles, granularity):
     hour = ((t + granularity) % 86400) / 86400 * 2 * math.pi  # time at candle close
     f[:, 11] = np.sin(hour)
     f[:, 12] = np.cos(hour)
+    past = np.concatenate([np.full(week, logc[0]), logc[:-week]])
+    f[:, 13] = np.clip((logc - past) / (vol20 * math.sqrt(week)), -3, 3) / 3
+    hi_w, lo_w = _rolling(h, min(week, WARMUP), np.max), _rolling(l, min(week, WARMUP), np.min)
+    f[:, 14] = (cl - lo_w) / np.maximum(hi_w - lo_w, 1e-12) * 2 - 1
+    f[:, 15] = np.clip((logc - np.log(_ema(cl, 200))) / (vol20 * 10), -3, 3) / 3
     return np.nan_to_num(f)
 
 
-def position_features(in_position, unrealized_pnl, bars_held):
+def position_features(in_position, unrealized_pnl, bars_held, prev_output):
+    """prev_output is the network's own output on the previous bar: a one-step memory."""
     return [1.0 if in_position else -1.0,
             math.tanh(unrealized_pnl * 10),
-            math.tanh(bars_held / 48)]
+            math.tanh(bars_held / 48),
+            prev_output]

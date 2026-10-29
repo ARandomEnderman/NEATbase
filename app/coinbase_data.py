@@ -36,6 +36,7 @@ def get_product(product_id):
     return {
         "base_increment": float(p["base_increment"]),
         "quote_increment": float(p["quote_increment"]),
+        "price_increment": float(p.get("price_increment") or p["quote_increment"]),
         "quote_min_size": float(p["quote_min_size"]),
         "base_min_size": float(p["base_min_size"]),
         "status": p.get("status"),

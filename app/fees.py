@@ -10,14 +10,14 @@ def coinbase_client():
     return RESTClient(api_key=config.COINBASE_API_KEY, api_secret=config.COINBASE_API_SECRET)
 
 
-def resolve_taker_fee():
-    """Your real taker fee tier if API keys are configured, otherwise TAKER_FEE."""
+def resolve_fees():
+    """(taker, maker) from your real Coinbase fee tier if a key is loaded, else settings."""
     if config.FEE_SOURCE == "auto" and config.has_api_keys():
         try:
-            summary = coinbase_client().get_transaction_summary().to_dict()
-            rate = float(summary["fee_tier"]["taker_fee_rate"])
-            log.info("Using taker fee %.4f%% from your Coinbase fee tier", rate * 100)
-            return rate
+            tier = coinbase_client().get_transaction_summary().to_dict()["fee_tier"]
+            taker, maker = float(tier["taker_fee_rate"]), float(tier["maker_fee_rate"])
+            log.info("Using your Coinbase fee tier: taker %.3f%%, maker %.3f%%", taker * 100, maker * 100)
+            return taker, maker
         except Exception as e:
-            log.warning("Could not read fee tier from Coinbase (%s); using TAKER_FEE", e)
-    return config.TAKER_FEE
+            log.warning("Could not read fee tier from Coinbase (%s); using TAKER_FEE/MAKER_FEE", e)
+    return config.TAKER_FEE, config.MAKER_FEE

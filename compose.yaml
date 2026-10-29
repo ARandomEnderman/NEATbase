@@ -12,33 +12,39 @@ services:
     container_name: neatbase-trainer
     command: ["python", "-m", "app.trainer"]
     restart: unless-stopped
-    cpus: 2
     environment:
-      PRODUCT_ID: BTC-USD
+      PRODUCT_IDS: BTC-USD,ETH-USD,SOL-USD
       GRANULARITY: "3600"
+      ORDER_TYPE: maker
       TAKER_FEE: "0.012"
+      MAKER_FEE: "0.006"
       SLIPPAGE_BPS: "5"
       SPREAD_BPS: "2"
-      TRAIN_DAYS: "60"
+      TRAIN_DAYS: "90"
       VALIDATION_DAYS: "14"
       GENERATIONS_PER_CYCLE: "100"
       RETRAIN_INTERVAL_HOURS: "3"
+      PROBATION_DAYS: "7"
       POP_SIZE: "150"
-      NUM_WORKERS: "2"
+      NUM_WORKERS: "0"
       TZ: UTC
     volumes:
       - /DATA/AppData/neatbase/data:/data
       - /DATA/AppData/neatbase/config:/config:ro
     x-casaos:
       envs:
-        - container: PRODUCT_ID
-          description: {en_us: "Coinbase spot pair to trade, e.g. BTC-USD, ETH-USD"}
+        - container: PRODUCT_IDS
+          description: {en_us: "Coins to trade, comma separated (must match the trader's list)"}
+        - container: ORDER_TYPE
+          description: {en_us: "maker = cheaper limit orders, taker = market orders"}
         - container: GRANULARITY
           description: {en_us: "Candle size in seconds (300, 900, 3600, 21600, ...)"}
         - container: TAKER_FEE
           description: {en_us: "Fee per fill when no API key is loaded (0.012 = 1.2%)"}
         - container: NUM_WORKERS
-          description: {en_us: "CPU cores used for training"}
+          description: {en_us: "CPU cores used for training (0 = all; runs at low priority)"}
+        - container: PROBATION_DAYS
+          description: {en_us: "Days a new network must beat the champion on unseen data"}
       volumes:
         - container: /data
           description: {en_us: "Candle cache, trained networks, trades, web password"}
@@ -57,9 +63,11 @@ services:
         published: "8080"
         protocol: tcp
     environment:
-      PRODUCT_ID: BTC-USD
+      PRODUCT_IDS: BTC-USD,ETH-USD,SOL-USD
       GRANULARITY: "3600"
+      ORDER_TYPE: maker
       TAKER_FEE: "0.012"
+      MAKER_FEE: "0.006"
       SLIPPAGE_BPS: "5"
       TRADING_MODE: paper
       PAPER_START_USD: "1000"

@@ -68,6 +68,17 @@
 
   <div class="grid" id="stats"></div>
 
+  <section>
+    <h2>Coins (one equal pot each)</h2>
+    <div class="grid" id="coins"></div>
+  </section>
+
+  <section>
+    <h2>Price &amp; the bot's trades</h2>
+    <p class="muted" style="margin:-6px 0 10px">▲ buy · ▼ sell · marker size = dollars traded · hover for details</p>
+    <div class="two" id="priceCharts"></div>
+  </section>
+
   <section class="card">
     <h2>Equity vs buy &amp; hold (after all fees)</h2>
     <div class="chart"><canvas id="equityChart"></canvas></div>
@@ -79,7 +90,7 @@
       <div class="chart"><canvas id="fitChart"></canvas></div>
     </div>
     <div class="card">
-      <h2>Latest candidate on held-out validation data</h2>
+      <h2>Latest candidate on held-out validation data (all coins)</h2>
       <div class="chart"><canvas id="valChart"></canvas></div>
     </div>
   </section>
@@ -87,6 +98,12 @@
   <section class="card">
     <h2>Trades</h2>
     <div class="scroll"><table id="trades"></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Probation: forward tests on unseen data</h2>
+    <p class="muted" id="probnote" style="margin:0 0 10px"></p>
+    <div class="scroll"><table id="challengers"></table></div>
   </section>
 
   <section class="card">
@@ -101,6 +118,8 @@ const usd = v => v == null ? "–" : "$" + v.toLocaleString(undefined, {minimumF
 const pct = v => v == null ? "–" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
 const cls = v => v == null ? "" : v >= 0 ? "pos" : "neg";
 const ts = t => new Date(t * 1000).toLocaleString();
+const px = v => v == null ? "–" : "$" + v.toLocaleString(undefined, {maximumSignificantDigits: 6});
+const days = t => Math.max(0, (t - Date.now() / 1000) / 86400).toFixed(1) + "d";
 const charts = {};
 
 function lineChart(id, datasets, labels) {
@@ -120,6 +139,62 @@ function lineChart(id, datasets, labels) {
       scales: {x: {ticks: {color: text, maxTicksLimit: 8}, grid: {color: grid}},
                y: {ticks: {color: text}, grid: {color: grid}}},
       plugins: {legend: {labels: {color: text, boxWidth: 12}}},
+    },
+  });
+}
+
+const fmtTime = ms => new Date(ms).toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
+
+function priceChart(pid, data) {
+  const id = "price-" + pid;
+  if (!$(id)) {
+    $("priceCharts").insertAdjacentHTML("beforeend",
+      `<div class="card"><h2>${pid}</h2><div class="chart"><canvas id="${id}"></canvas></div></div>`);
+  }
+  const grid = css("--border"), text = css("--muted");
+  const usdAmt = t => Math.abs(t.cash_delta);
+  const radius = t => Math.max(5, Math.min(14, 4 + Math.sqrt(usdAmt(t)) / 3));
+  const mark = side => data.trades.filter(t => t.side === side)
+    .map(t => ({x: t.ts * 1000, y: t.price, r: radius(t), t}));
+  const datasets = [
+    {type: "line", label: "Price", data: data.candles.map(([t, c]) => ({x: t * 1000, y: c})),
+     borderColor: css("--accent"), borderWidth: 1.5, pointRadius: 0, pointStyle: "line", tension: 0, order: 3},
+    {type: "scatter", label: "Buy", data: mark("buy"), pointStyle: "triangle", rotation: 0,
+     backgroundColor: css("--pos"), borderColor: css("--card"), borderWidth: 1,
+     pointRadius: c => c.raw ? c.raw.r : 6, pointHoverRadius: c => c.raw ? c.raw.r + 2 : 8, order: 1},
+    {type: "scatter", label: "Sell", data: mark("sell"), pointStyle: "triangle", rotation: 180,
+     backgroundColor: css("--neg"), borderColor: css("--card"), borderWidth: 1,
+     pointRadius: c => c.raw ? c.raw.r : 6, pointHoverRadius: c => c.raw ? c.raw.r + 2 : 8, order: 2},
+  ];
+  if (charts[id]) {
+    charts[id].data.datasets.forEach((d, i) => d.data = datasets[i].data);
+    charts[id].update("none");
+    return;
+  }
+  charts[id] = new Chart($(id), {
+    type: "scatter",
+    data: {datasets},
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: {mode: "nearest", intersect: false},
+      scales: {
+        x: {type: "linear", ticks: {color: text, maxTicksLimit: 6, callback: v => fmtTime(v)}, grid: {color: grid}},
+        y: {ticks: {color: text, callback: v => px(v)}, grid: {color: grid}},
+      },
+      plugins: {
+        legend: {labels: {color: text, boxWidth: 12, usePointStyle: true}},
+        tooltip: {filter: (item, _, all) => item.raw.t || !all.some(i => i.raw.t), callbacks: {
+          title: items => fmtTime(items[0].raw.x),
+          label: c => {
+            const t = c.raw.t;
+            if (!t) return `Price ${px(c.raw.y)}`;
+            const what = `${t.side.toUpperCase()} ${usd(Math.abs(t.cash_delta))} @ ${px(t.price)}`;
+            const extra = [`${t.qty.toPrecision(6)} ${pid.split("-")[0]}`, `${t.order_type || ""} fee ${usd(t.fee)}`];
+            if (t.pnl != null) extra.push(`P&L ${t.pnl >= 0 ? "+" : ""}${usd(t.pnl)}`);
+            return [what, ...extra];
+          },
+        }},
+      },
     },
   });
 }
@@ -145,21 +220,33 @@ async function refresh() {
   $("notices").innerHTML = notices.map(n => `<div class="notice">${n}</div>`).join("");
 
   if (!s.ready) {
-    $("meta").textContent = `${s.product} · waiting for the trainer's first champion…` + keyInfo(s);
+    $("meta").textContent = `${s.products.join(", ")} · waiting for the trainer's first champion…` + keyInfo(s);
   } else {
-    $("meta").textContent = `${s.product} · ${s.granularity / 60}m candles · taker fee ${(s.taker_fee * 100).toFixed(2)}% · slippage ${s.slippage_bps}bps · since ${ts(s.started_at)}` +
+    const feeInfo = s.order_type === "maker"
+      ? `maker orders ${(s.maker_fee * 100).toFixed(2)}% (market fallback ${(s.taker_fee * 100).toFixed(2)}%)`
+      : `market orders ${(s.taker_fee * 100).toFixed(2)}%`;
+    $("meta").textContent = `${s.granularity / 60}m candles · ${feeInfo} · slippage ${s.slippage_bps}bps · since ${ts(s.started_at)}` +
       (s.last_update ? ` · updated ${ts(s.last_update)}` : "") + keyInfo(s);
     const c = s.champion || {};
     $("stats").innerHTML = [
       stat("Equity", usd(s.equity), `started ${usd(s.start_equity)}`),
       stat("Bot return", pct(s.return_pct), "after fees & slippage", cls(s.return_pct)),
       stat("Buy &amp; hold", pct(s.benchmark_pct), "same fees", cls(s.benchmark_pct)),
-      stat("Fees paid", usd(s.fees_paid), `${s.fills} fills`),
+      stat("Fees paid", usd(s.fees_paid), `${s.fills} fills · ${s.maker_fills} as maker`),
       stat("Round trips", s.round_trips, s.win_rate == null ? "" : `win rate ${(s.win_rate * 100).toFixed(0)}%`),
       stat("Max drawdown", s.max_drawdown_pct.toFixed(2) + "%", "from peak equity", s.max_drawdown_pct > 0 ? "neg" : ""),
-      stat("Position", s.in_position ? "LONG" : "CASH", s.in_position ? `${s.qty.toFixed(8)} @ ${usd(s.last_price)}` : usd(s.cash)),
-      stat("Last signal", s.last_output == null ? "–" : s.last_output.toFixed(3), c.generation != null ? `champion gen ${c.generation} · ${c.nodes}n/${c.conns}c` : ""),
+      stat("Champion", c.generation != null ? `gen ${c.generation}` : "–", c.how ? `${c.how} · ${c.nodes}n/${c.conns}c` : ""),
     ].join("");
+    $("coins").innerHTML = s.slots.map(sl => stat(sl.product,
+      sl.qty > 0 ? "LONG" : "CASH",
+      (sl.qty > 0 ? `${sl.qty.toPrecision(6)} @ ${px(sl.last_price)}` : `${usd(sl.cash)} · ${px(sl.last_price)}`) +
+      ` · signal ${sl.last_output == null ? "–" : sl.last_output.toFixed(2)}` +
+      (sl.pending ? ` · resting ${sl.pending}` : ""))).join("");
+  }
+
+  if (s.ready) {
+    const priceData = await Promise.all(s.products.map(p => getJSON("prices/" + p)));
+    priceData.forEach(d => priceChart(d.product, d));
   }
 
   lineChart("equityChart", [
@@ -182,13 +269,24 @@ async function refresh() {
     ], vc.map(r => new Date(r[0] * 1000).toLocaleDateString([], {month: "short", day: "numeric"})));
   }
 
-  $("trades").innerHTML = "<tr><th>Time</th><th>Side</th><th>Qty</th><th>Price</th><th>Fee</th><th>Trade P&amp;L</th><th>Equity</th><th>Signal</th></tr>" +
-    (tr.length ? tr.map(t => `<tr><td>${ts(t.ts)}</td><td>${t.side.toUpperCase()}</td><td>${t.qty.toFixed(8)}</td>
-      <td>${usd(t.price)}</td><td>${usd(t.fee)}</td><td class="${cls(t.pnl)}">${t.pnl == null ? "" : usd(t.pnl)}</td>
+  $("trades").innerHTML = "<tr><th>Time</th><th>Coin</th><th>Side</th><th>Order</th><th>Qty</th><th>Price</th><th>Fee</th><th>Trade P&amp;L</th><th>Coin equity</th><th>Signal</th></tr>" +
+    (tr.length ? tr.map(t => `<tr><td>${ts(t.ts)}</td><td>${t.product || ""}</td><td>${t.side.toUpperCase()}</td>
+      <td>${t.order_type || ""}</td><td>${t.qty.toPrecision(6)}</td>
+      <td>${px(t.price)}</td><td>${usd(t.fee)}</td><td class="${cls(t.pnl)}">${t.pnl == null ? "" : usd(t.pnl)}</td>
       <td>${usd(t.equity)}</td><td>${t.output.toFixed(3)}</td></tr>`).join("")
-      : `<tr><td colspan="8" class="muted">No trades yet. With fees this high the bot is often right to sit in cash.</td></tr>`);
+      : `<tr><td colspan="10" class="muted">No trades yet. With fees this high the bot is often right to sit in cash.</td></tr>`);
 
-  $("runs").innerHTML = "<tr><th>Time</th><th>Gen</th><th>Train</th><th>Validation</th><th>Val B&amp;H</th><th>Val trades</th><th>Val fees</th><th>Val max DD</th><th>Old champ val</th><th>Promoted</th></tr>" +
+  $("probnote").textContent = `A candidate that beats the champion on validation must also beat it over the next ${trn.probation_days} days of new data before it trades. One forward test each, no retries.`;
+  const status = {waiting: "on probation", won: "won (another winner was better)", lost: "lost", promoted: "PROMOTED", replaced: "replaced by a better one that day", dropped: "dropped"};
+  $("challengers").innerHTML = "<tr><th>Created</th><th>Gen</th><th>Size</th><th>Validation</th><th>Forward</th><th>Champion forward</th><th>Status</th></tr>" +
+    (trn.challengers.length ? trn.challengers.map(c => `<tr><td>${ts(c.born)}</td><td>${c.generation}</td><td>${c.nodes}n/${c.conns}c</td>
+      <td class="${cls(c.validation.return_pct)}">${pct(c.validation.return_pct)}</td>
+      <td class="${cls(c.forward && c.forward.return_pct)}">${c.forward ? pct(c.forward.return_pct) + ` (${c.forward.trades} tr)` : "–"}</td>
+      <td class="${cls(c.champion_forward && c.champion_forward.return_pct)}">${c.champion_forward ? pct(c.champion_forward.return_pct) + ` (${c.champion_forward.trades} tr)` : "–"}</td>
+      <td>${c.status === "waiting" ? `on probation, ${days(c.eligible_at)} left` : status[c.status] || c.status}</td></tr>`).join("")
+      : `<tr><td colspan="7" class="muted">No challengers yet.</td></tr>`);
+
+  $("runs").innerHTML = "<tr><th>Time</th><th>Gen</th><th>Train</th><th>Validation</th><th>Val B&amp;H</th><th>Val trades</th><th>Val fees</th><th>Val max DD</th><th>Champion val</th><th>Outcome</th></tr>" +
     (trn.runs.length ? trn.runs.map(r => `<tr><td>${ts(r.ts)}</td><td>${r.generation}</td>
       <td class="${cls(r.train.return_pct)}">${pct(r.train.return_pct)}</td>
       <td class="${cls(r.validation.return_pct)}">${pct(r.validation.return_pct)}</td>
@@ -196,8 +294,8 @@ async function refresh() {
       <td>${r.validation.trades}</td><td>${usd(r.validation.fees_paid)}</td>
       <td>${r.validation.max_drawdown_pct.toFixed(2)}%</td>
       <td>${r.champion_validation ? pct(r.champion_validation.return_pct) : "–"}</td>
-      <td>${r.promoted ? "yes" : "no"}</td></tr>`).join("")
-      : `<tr><td colspan="10" class="muted">First training cycle is running. Check <code>docker compose logs -f trainer</code>.</td></tr>`);
+      <td style="text-align:left">${r.status || (r.promoted ? "promoted" : "")}</td></tr>`).join("")
+      : `<tr><td colspan="10" class="muted">First training cycle is running. Check <code>docker logs -f neatbase-trainer</code>.</td></tr>`);
 }
 
 function keyInfo(s) {

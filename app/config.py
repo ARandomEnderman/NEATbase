@@ -51,13 +51,18 @@ def _s(name, default):
 DATA_DIR = _s("DATA_DIR", "/data")
 
 # Market
-PRODUCT_ID = _s("PRODUCT_ID", "BTC-USD")
+# One network trades every coin in this list, each with its own share of the money.
+PRODUCT_IDS = [p.strip().upper() for p in _s(
+    "PRODUCT_IDS", _s("PRODUCT_ID", "BTC-USD,ETH-USD,SOL-USD")).split(",") if p.strip()]
 GRANULARITY = _i("GRANULARITY", 3600)  # seconds per candle: 60, 300, 900, 1800, 3600, 7200, 21600, 86400
 
 # Fees & execution costs (Coinbase Advanced Trade, lowest volume tier by default).
 # Market orders always pay the taker fee.
 FEE_SOURCE = _s("FEE_SOURCE", "auto")  # auto = use your real fee tier if API keys are set, else TAKER_FEE
+ORDER_TYPE = _s("ORDER_TYPE", "maker").lower()  # maker = post-only limit orders, taker = market orders
 TAKER_FEE = _f("TAKER_FEE", 0.012)  # 1.20%
+MAKER_FEE = _f("MAKER_FEE", 0.006)  # 0.60%
+MAKER_SELL_FALLBACK_BARS = _i("MAKER_SELL_FALLBACK_BARS", 2)  # unfilled limit sells -> market sell after this many bars
 SLIPPAGE_BPS = _f("SLIPPAGE_BPS", 5.0)  # extra adverse move on every fill (latency / impact), basis points
 SPREAD_BPS = _f("SPREAD_BPS", 2.0)  # backtest-only: candles have no bid/ask, so assume this spread (live uses the real book)
 
@@ -67,7 +72,7 @@ BUY_THRESHOLD = _f("BUY_THRESHOLD", 0.2)  # network output above this -> buy (wh
 SELL_THRESHOLD = _f("SELL_THRESHOLD", -0.2)  # network output below this -> sell (when holding)
 
 # Training
-TRAIN_DAYS = _f("TRAIN_DAYS", 60)
+TRAIN_DAYS = _f("TRAIN_DAYS", 90)
 VALIDATION_DAYS = _f("VALIDATION_DAYS", 14)
 GENERATIONS_PER_CYCLE = _i("GENERATIONS_PER_CYCLE", 100)
 RETRAIN_INTERVAL_HOURS = _f("RETRAIN_INTERVAL_HOURS", 3)
@@ -76,6 +81,10 @@ NUM_WORKERS = _i("NUM_WORKERS", 0)  # 0 = all CPU cores
 FITNESS_CHUNKS = _i("FITNESS_CHUNKS", 4)  # score consistency across this many sub-periods
 DRAWDOWN_PENALTY = _f("DRAWDOWN_PENALTY", 0.5)
 INACTIVITY_PENALTY = _f("INACTIVITY_PENALTY", 0.25)
+# A candidate that beats the champion on validation must then also beat it on data
+# that didn't exist yet when it was trained, before it may trade.
+PROBATION_DAYS = _f("PROBATION_DAYS", 7)
+MAX_CHALLENGERS = _i("MAX_CHALLENGERS", 6)
 
 # Trading
 TRADING_MODE = _s("TRADING_MODE", "paper").lower()  # paper | live
@@ -115,11 +124,16 @@ GRANULARITY_NAMES = {
 }
 if GRANULARITY not in GRANULARITY_NAMES:
     raise SystemExit(f"GRANULARITY must be one of {sorted(GRANULARITY_NAMES)}")
+if ORDER_TYPE not in ("maker", "taker"):
+    raise SystemExit("ORDER_TYPE must be maker or taker")
+if not PRODUCT_IDS:
+    raise SystemExit("PRODUCT_IDS is empty")
 
 CHAMPION_PATH = os.path.join(DATA_DIR, "champion.pkl")
 TRAINER_DB = os.path.join(DATA_DIR, "trainer.db")
 TRADER_DB = os.path.join(DATA_DIR, "trader.db")
 CHECKPOINT_PATH = os.path.join(DATA_DIR, "population.ckpt")
+CHALLENGERS_DIR = os.path.join(DATA_DIR, "challengers")
 KILL_SWITCH_PATH = os.path.join(DATA_DIR, "STOP")
 AUTH_PATH = os.path.join(DATA_DIR, "auth.json")
 SECRET_KEY_PATH = os.path.join(DATA_DIR, "web_secret.key")
