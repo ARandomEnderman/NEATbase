@@ -20,6 +20,7 @@ services:
       MAKER_FEE: "0.006"
       SLIPPAGE_BPS: "5"
       SPREAD_BPS: "2"
+      MAX_POSITION_FRACTION: "0.5"
       TRAIN_DAYS: "90"
       VALIDATION_DAYS: "14"
       GENERATIONS_PER_CYCLE: "100"
@@ -37,6 +38,8 @@ services:
           description: {en_us: "Coins to trade, comma separated (must match the trader's list)"}
         - container: ORDER_TYPE
           description: {en_us: "maker = cheaper limit orders, taker = market orders"}
+        - container: MAX_POSITION_FRACTION
+          description: {en_us: "Most of each coin's pot ever invested (keep equal to the trader's)"}
         - container: GRANULARITY
           description: {en_us: "Candle size in seconds (300, 900, 3600, 21600, ...)"}
         - container: TAKER_FEE
@@ -69,6 +72,7 @@ services:
       TAKER_FEE: "0.012"
       MAKER_FEE: "0.006"
       SLIPPAGE_BPS: "5"
+      MAX_POSITION_FRACTION: "0.5"
       TRADING_MODE: paper
       PAPER_START_USD: "1000"
       LIVE_MAX_USD: "50"
@@ -85,6 +89,8 @@ services:
       retries: 3
     x-casaos:
       envs:
+        - container: MAX_POSITION_FRACTION
+          description: {en_us: "Most of each coin's pot ever invested, 0.5 = at most half your money in crypto"}
         - container: TRADING_MODE
           description: {en_us: "paper or live (live also needs LIVE_CONFIRM in config/settings.env)"}
         - container: PAPER_START_USD

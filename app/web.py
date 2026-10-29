@@ -62,6 +62,7 @@ def summary():
         "started_at": st["started_at"], "last_update": st.get("last_update"),
         "granularity": config.GRANULARITY, "taker_fee": st["taker_fee"], "maker_fee": st["maker_fee"],
         "order_type": st["order_type"], "slippage_bps": config.SLIPPAGE_BPS,
+        "max_position_fraction": config.MAX_POSITION_FRACTION,
         "start_equity": start, "equity": last["equity"], "benchmark": last["benchmark"],
         "return_pct": 100 * (last["equity"] / start - 1),
         "benchmark_pct": 100 * (last["benchmark"] / start - 1),

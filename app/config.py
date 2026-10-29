@@ -67,7 +67,11 @@ SLIPPAGE_BPS = _f("SLIPPAGE_BPS", 5.0)  # extra adverse move on every fill (late
 SPREAD_BPS = _f("SPREAD_BPS", 2.0)  # backtest-only: candles have no bid/ask, so assume this spread (live uses the real book)
 
 # Strategy
-POSITION_FRACTION = _f("POSITION_FRACTION", 1.0)  # share of available cash used per buy
+# Position size is set by signal strength: a buy signal just over BUY_THRESHOLD invests
+# 1/SIZE_STEPS of MAX_POSITION_FRACTION of that coin's pot, the strongest signal the full
+# MAX_POSITION_FRACTION. The rest of the pot always stays in cash.
+MAX_POSITION_FRACTION = _f("MAX_POSITION_FRACTION", 0.5)
+SIZE_STEPS = _i("SIZE_STEPS", 4)
 BUY_THRESHOLD = _f("BUY_THRESHOLD", 0.2)  # network output above this -> buy (when flat)
 SELL_THRESHOLD = _f("SELL_THRESHOLD", -0.2)  # network output below this -> sell (when holding)
 

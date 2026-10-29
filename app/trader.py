@@ -12,7 +12,7 @@ import neat
 
 from . import coinbase_data, config, features, fees, web
 from .broker import CoinbaseBroker, PaperBroker
-from .sim import buy_with_cash, decide, sell_base
+from .sim import buy_with_cash, decide, entry_fraction, exposure, sell_base
 from .trainer import load_champion, load_neat_config
 
 log = logging.getLogger("trader")
@@ -139,8 +139,10 @@ def step_product(db, st, broker, net, pid, forced_exit):
     feats = features.market_features(candles, config.GRANULARITY)[-1]
     fee = broker.taker_fee
     in_pos = slot["qty"] > 0
-    pnl = sell_base(slot["qty"], mark, fee)[0] / slot["entry_cost"] - 1 if in_pos and slot["entry_cost"] else 0.0
-    out = net.activate(list(feats) + features.position_features(in_pos, pnl, slot["held"], slot["prev_out"]))[0]
+    value = sell_base(slot["qty"], mark, fee)[0] if in_pos else 0.0
+    pnl = value / slot["entry_cost"] - 1 if in_pos and slot["entry_cost"] else 0.0
+    out = net.activate(list(feats) + features.position_features(
+        exposure(slot["cash"], value), pnl, slot["held"], slot["prev_out"]))[0]
     slot["prev_out"] = out
     action = decide(out, in_pos)
     if forced_exit:
@@ -151,7 +153,7 @@ def step_product(db, st, broker, net, pid, forced_exit):
     maker = config.ORDER_TYPE == "maker" and not forced_exit
     bar = candles[-1][0]
     if action == "buy":
-        spend = slot["cash"] * config.POSITION_FRACTION
+        spend = slot["cash"] * entry_fraction(out)
         if maker:
             slot["pending"] = broker.place_limit(pid, "buy", spend, bar)
         else:

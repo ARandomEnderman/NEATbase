@@ -77,9 +77,10 @@ def market_features(candles, granularity):
     return np.nan_to_num(f)
 
 
-def position_features(in_position, unrealized_pnl, bars_held, prev_output):
-    """prev_output is the network's own output on the previous bar: a one-step memory."""
-    return [1.0 if in_position else -1.0,
+def position_features(exposure, unrealized_pnl, bars_held, prev_output):
+    """exposure: position value as a share of the allowed maximum (0 = flat, 1 = max size).
+    prev_output is the network's own output on the previous bar: a one-step memory."""
+    return [2 * min(1.0, exposure) - 1,
             math.tanh(unrealized_pnl * 10),
             math.tanh(bars_held / 48),
             prev_output]

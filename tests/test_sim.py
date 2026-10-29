@@ -3,7 +3,8 @@ import random
 
 from app import features
 from app.broker import walk_book
-from app.sim import Costs, backtest, backtest_many, buy_with_cash, combine_curves, limit_fills, sell_base, window
+from app.sim import (Costs, backtest, backtest_many, buy_with_cash, combine_curves, entry_fraction, exposure,
+                     limit_fills, sell_base, window)
 
 TAKER = Costs(taker_fee=0.012, maker_fee=0.006, slippage_bps=5, spread_bps=2, order_type="taker")
 MAKER = Costs(taker_fee=0.012, maker_fee=0.006, slippage_bps=5, spread_bps=2, order_type="maker",
@@ -31,16 +32,17 @@ def test_features_shape_and_memory_input():
     feats = features.market_features(candles, 3600)
     assert feats.shape == (N, features.N_MARKET)
     assert abs(feats[features.WARMUP:]).max() <= 1.0 + 1e-9
-    assert features.position_features(True, 0.0, 0, -0.7)[-1] == -0.7
+    assert features.position_features(1.0, 0.0, 0, -0.7) == [1.0, 0.0, 0.0, -0.7]
+    assert features.position_features(0.0, 0.0, 0, 0.0)[0] == -1.0
     assert features.N_INPUTS == 20
 
 
 def test_do_nothing_keeps_cash_and_always_long_matches_buy_hold():
     candles = _candles()
     feats = features.market_features(candles, 3600)
-    r = backtest(lambda x: [0.0], feats, candles, features.WARMUP, N, TAKER)
+    r = backtest(lambda x: [0.0], feats, candles, features.WARMUP, N, TAKER, max_fraction=1.0)
     assert r["final_equity"] == 1000 and r["trades"] == 0 and r["fees_paid"] == 0
-    always_long = backtest(lambda x: [1.0], feats, candles, features.WARMUP, N, TAKER)
+    always_long = backtest(lambda x: [1.0], feats, candles, features.WARMUP, N, TAKER, max_fraction=1.0)
     assert math.isclose(always_long["return_pct"], always_long["buy_hold_pct"], abs_tol=1e-9)
 
 
@@ -48,7 +50,7 @@ def test_churning_bleeds_fees():
     candles = _candles()
     feats = features.market_features(candles, 3600)
     flip = iter(range(10**6))
-    r = backtest(lambda x: [1.0 if next(flip) % 2 else -1.0], feats, candles, features.WARMUP, N, TAKER)
+    r = backtest(lambda x: [1.0 if next(flip) % 2 else -1.0], feats, candles, features.WARMUP, N, TAKER, max_fraction=1.0)
     assert r["trades"] > 250 and r["final_equity"] < 20
 
 
@@ -62,11 +64,11 @@ def test_maker_round_trip_is_cheaper_and_waits_for_next_bar():
     flat = [(i * 3600, 100.0, 101.0, 99.0, 100.0, 5.0) for i in range(N)]
     feats = features.market_features(flat, 3600)
     signals = iter([1.0] + [0.0] * 9 + [-1.0] + [0.0] * 10**6)
-    m = backtest(lambda x: [next(signals)], feats, flat, features.WARMUP, N, MAKER, record=True)
+    m = backtest(lambda x: [next(signals)], feats, flat, features.WARMUP, N, MAKER, max_fraction=1.0, record=True)
     assert [e["side"] for e in m["log"]] == ["buy", "sell"]
     assert m["log"][0]["time"] == flat[features.WARMUP + 1][0]  # filled on the bar after the decision
     signals = iter([1.0] + [0.0] * 9 + [-1.0] + [0.0] * 10**6)
-    t = backtest(lambda x: [next(signals)], feats, flat, features.WARMUP, N, TAKER)
+    t = backtest(lambda x: [next(signals)], feats, flat, features.WARMUP, N, TAKER, max_fraction=1.0)
     assert m["fees_paid"] < 0.55 * t["fees_paid"] and m["final_equity"] > t["final_equity"] + 10
 
 
@@ -80,7 +82,7 @@ def test_unfilled_maker_sell_falls_back_to_market():
         candles.append((i * 3600, o, o * 1.0001, p * 0.999, p, 5.0))
     feats = features.market_features(candles, 3600)
     sig = iter([1.0] + [-1.0] * 10**6)
-    r = backtest(lambda x: [next(sig)], feats, candles, w, N, MAKER, record=True)
+    r = backtest(lambda x: [next(sig)], feats, candles, w, N, MAKER, max_fraction=1.0, record=True)
     buy, sell = r["log"][:2]
     assert buy["side"] == "buy" and math.isclose(buy["fee"], 1000 / 1.006 * 0.006)  # maker fee
     # limit sells placed at bars w+1 and w+2 both miss -> market sell at bar w+3, taker fee
@@ -105,3 +107,30 @@ def test_walk_book_vwap():
     assert math.isclose(walk_book(asks, quote=150.0), 150.0 / (1 + 50 / 101))
     bids = [(99.0, 1.0), (98.0, 1.0)]
     assert math.isclose(walk_book(bids, base=1.5), (99 + 49) / 1.5)
+
+
+def test_signal_strength_sets_size_up_to_the_cap():
+    # BUY_THRESHOLD 0.2, 4 steps, cap 0.5: weak signal 12.5%, strongest 50% of the pot
+    assert entry_fraction(0.21) == 0.125
+    assert entry_fraction(0.45) == 0.25
+    assert entry_fraction(0.99) == 0.5 and entry_fraction(1.0) == 0.5
+    assert entry_fraction(1.0, max_fraction=1.0) == 1.0
+    assert exposure(500, 500) == 1.0 and exposure(1000, 0) == 0.0  # half invested = at the 50% cap
+
+
+def test_never_more_than_the_cap_invested():
+    candles = _candles()
+    feats = features.market_features(candles, 3600)
+    seen = []
+
+    def policy(x):
+        seen.append(x[features.N_MARKET])  # the exposure input
+        return [1.0]
+
+    r = backtest(policy, feats, candles, features.WARMUP, N, TAKER, record=True)
+    buy = r["log"][0]
+    assert math.isclose(buy["fee"], 500 / 1.012 * 0.012)  # spent 50% of the pot
+    assert len(r["log"]) == 1  # sizing is set at entry; it never tops up
+    assert seen[0] == -1.0 and max(seen) <= 1.0
+    # with half the pot invested it moves about half as much as buy & hold
+    assert abs(r["return_pct"]) < abs(r["buy_hold_pct"])

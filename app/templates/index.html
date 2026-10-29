@@ -225,23 +225,26 @@ async function refresh() {
     const feeInfo = s.order_type === "maker"
       ? `maker orders ${(s.maker_fee * 100).toFixed(2)}% (market fallback ${(s.taker_fee * 100).toFixed(2)}%)`
       : `market orders ${(s.taker_fee * 100).toFixed(2)}%`;
-    $("meta").textContent = `${s.granularity / 60}m candles · ${feeInfo} · slippage ${s.slippage_bps}bps · since ${ts(s.started_at)}` +
+    $("meta").textContent = `${s.granularity / 60}m candles · ${feeInfo} · slippage ${s.slippage_bps}bps · max ${Math.round(s.max_position_fraction * 100)}% invested · since ${ts(s.started_at)}` +
       (s.last_update ? ` · updated ${ts(s.last_update)}` : "") + keyInfo(s);
     const c = s.champion || {};
     $("stats").innerHTML = [
       stat("Equity", usd(s.equity), `started ${usd(s.start_equity)}`),
       stat("Bot return", pct(s.return_pct), "after fees & slippage", cls(s.return_pct)),
-      stat("Buy &amp; hold", pct(s.benchmark_pct), "same fees", cls(s.benchmark_pct)),
+      stat("Buy &amp; hold", pct(s.benchmark_pct), "100% invested, same fees", cls(s.benchmark_pct)),
       stat("Fees paid", usd(s.fees_paid), `${s.fills} fills · ${s.maker_fills} as maker`),
       stat("Round trips", s.round_trips, s.win_rate == null ? "" : `win rate ${(s.win_rate * 100).toFixed(0)}%`),
       stat("Max drawdown", s.max_drawdown_pct.toFixed(2) + "%", "from peak equity", s.max_drawdown_pct > 0 ? "neg" : ""),
       stat("Champion", c.generation != null ? `gen ${c.generation}` : "–", c.how ? `${c.how} · ${c.nodes}n/${c.conns}c` : ""),
     ].join("");
-    $("coins").innerHTML = s.slots.map(sl => stat(sl.product,
-      sl.qty > 0 ? "LONG" : "CASH",
-      (sl.qty > 0 ? `${sl.qty.toPrecision(6)} @ ${px(sl.last_price)}` : `${usd(sl.cash)} · ${px(sl.last_price)}`) +
+    $("coins").innerHTML = s.slots.map(sl => {
+      const value = sl.qty * (sl.last_price || 0), invested = value / (value + sl.cash || 1);
+      return stat(sl.product,
+      sl.qty > 0 ? `${Math.round(invested * 100)}% IN` : "CASH",
+      (sl.qty > 0 ? `${sl.qty.toPrecision(6)} @ ${px(sl.last_price)} · ${usd(sl.cash)} cash` : `${usd(sl.cash)} · ${px(sl.last_price)}`) +
       ` · signal ${sl.last_output == null ? "–" : sl.last_output.toFixed(2)}` +
-      (sl.pending ? ` · resting ${sl.pending}` : ""))).join("");
+      (sl.pending ? ` · resting ${sl.pending}` : ""));
+    }).join("");
   }
 
   if (s.ready) {

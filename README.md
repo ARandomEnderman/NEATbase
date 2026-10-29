@@ -42,11 +42,21 @@ two-container Docker Compose app and is built for ZimaOS.
   - position in its 20-candle and one-week ranges
   - candle body
   - time of day
-  - the position (held or not, P&L after fees, how long it's been held)
+  - the position (how big it is relative to the cap, P&L after fees, how long it's been held)
   - **its own previous output**, a one-step memory
 
-  Each coin trades its own equal share of the money, never all-in on one coin. It also
-  tracks a buy & hold benchmark that pays the same fees.
+  Each coin trades its own equal share of the money.
+- **Position sizing:** the strength of the buy signal sets the size. A signal just over
+  `BUY_THRESHOLD` invests ¼ of the maximum and the strongest signal invests the full
+  maximum, in `SIZE_STEPS` (4) steps. The maximum is `MAX_POSITION_FRACTION` (0.5) of
+  that coin's pot, so **at most half your money is ever in crypto**, even when every
+  coin is bought at once. The size is set when buying, and a sell always sells the
+  whole position. Training uses exactly the same rules, so the network learns when a
+  bigger bet is worth it.
+- **Benchmark:** a buy & hold line that pays the same fees. Note that buy & hold is
+  100% invested while the bot is at most 50%, so in a rising market the bot can trail
+  it even with good timing, and in a falling market it can beat it just by holding
+  less.
 - **Web UI** on port 8080 shows:
   - a price chart per coin with every buy ▲ and sell ▼ marked (size = dollars traded,
     hover for amount, fee and P&L)
@@ -182,6 +192,8 @@ Change settings either in the ZimaOS app settings screen (environment variables)
 |---|---|---|
 | `PRODUCT_IDS` | `BTC-USD,ETH-USD,SOL-USD` | coins to trade, one shared network, equal pot each |
 | `ORDER_TYPE` | `maker` | `maker` = limit orders at 0.60%, `taker` = market orders at 1.20% |
+| `MAX_POSITION_FRACTION` | `0.5` | most of each coin's pot ever invested; 0.5 = never more than half your money in crypto |
+| `SIZE_STEPS` | `4` | buy size steps between a weak signal (¼ of max) and the strongest (full max) |
 | `GRANULARITY` | `3600` | candle size in seconds (60, 300, 900, 1800, 3600, 7200, 21600, 86400) |
 | `TAKER_FEE` / `MAKER_FEE` | `0.012` / `0.006` | your fee tier (ignored when an API key is loaded) |
 | `SLIPPAGE_BPS` / `SPREAD_BPS` | `5` / `2` | extra execution costs |

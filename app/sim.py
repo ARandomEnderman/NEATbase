@@ -58,6 +58,17 @@ def limit_fills(side, price, candle):
     return candle[3] < price if side == "buy" else candle[2] > price
 
 
+def entry_fraction(output, max_fraction=config.MAX_POSITION_FRACTION, steps=config.SIZE_STEPS):
+    """Share of the pot to invest on a buy: stronger signal -> bigger position, in steps."""
+    strength = (output - config.BUY_THRESHOLD) / (1 - config.BUY_THRESHOLD)
+    return max_fraction * min(steps, max(1, math.ceil(strength * steps))) / steps
+
+
+def exposure(cash, position_value, max_fraction=config.MAX_POSITION_FRACTION):
+    total = cash + position_value
+    return position_value / total / max_fraction if total > 0 else 0.0
+
+
 def decide(output, in_position):
     if not in_position and output > config.BUY_THRESHOLD:
         return "buy"
@@ -67,7 +78,7 @@ def decide(output, in_position):
 
 
 def backtest(activate, feats, candles, start, end, costs, start_cash=1000.0,
-             fraction=config.POSITION_FRACTION, chunks=1, record=False):
+             max_fraction=config.MAX_POSITION_FRACTION, chunks=1, record=False):
     """Run a policy over bars [start, end). Decisions use bar i's closed candle."""
     maker = costs.order_type == "maker"
     cash, qty, entry_cost, held, prev_out = start_cash, 0.0, 0.0, 0, 0.0
@@ -113,18 +124,21 @@ def backtest(activate, feats, candles, start, end, costs, start_cash=1000.0,
         close = bar[4]
         sell_px = costs.sell_price(close)
         in_pos = qty > 0
-        pnl = sell_base(qty, sell_px, costs.taker_fee)[0] / entry_cost - 1 if in_pos else 0.0
-        out = activate(list(feats[i]) + position_features(in_pos, pnl, held, prev_out))[0]
+        value = sell_base(qty, sell_px, costs.taker_fee)[0] if in_pos else 0.0
+        pnl = value / entry_cost - 1 if in_pos else 0.0
+        out = activate(list(feats[i]) + position_features(exposure(cash, value, max_fraction), pnl, held,
+                                                          prev_out))[0]
         prev_out = out
         action = decide(out, in_pos)
         if action != "sell":
             sell_fails = 0
 
-        if action == "buy" and cash * fraction >= 1.0:
+        spend = cash * entry_fraction(out, max_fraction) if action == "buy" else 0.0
+        if action == "buy" and spend >= 1.0:
             if maker:
-                pending = ("buy", costs.bid(close), cash * fraction)
+                pending = ("buy", costs.bid(close), spend)
             else:
-                do_buy(cash * fraction, costs.buy_price(close), costs.taker_fee, bar[0])
+                do_buy(spend, costs.buy_price(close), costs.taker_fee, bar[0])
         elif action == "sell":
             if maker and sell_fails < costs.fallback_bars:
                 pending = ("sell", costs.ask(close), qty)
