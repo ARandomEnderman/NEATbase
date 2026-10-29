@@ -1,3 +1,6 @@
 __pycache__/
 data/
 .env
+config/settings.env
+config/cdp_api_key.json
+*.pem

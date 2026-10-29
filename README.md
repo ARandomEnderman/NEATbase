@@ -26,8 +26,10 @@ two-container Docker Compose app and is built for ZimaOS.
   training: volatility-normalised returns, RSI, EMA trend, volume, range, time of day, and
   position / unrealised P&L / bars held. It buys or sells against the **real live order
   book**. It also tracks a buy & hold benchmark that pays the same fees.
-- **Dashboard** on port 8080: shows equity vs buy & hold, fees paid, win rate, drawdown,
-  trades, fitness per generation, and each candidate's validation curve.
+- **Web UI** on port 8080: shows equity vs buy & hold, fees paid, win rate, drawdown,
+  trades, fitness per generation, and each candidate's validation curve. It has a
+  Pause/Resume switch and is password protected. Only local networks can reach it
+  (see below).
 
 ### Costs included in the simulation
 
@@ -64,8 +66,10 @@ cp .env.example .env        # optional: edit settings
 docker compose up -d --build
 ```
 
-Open `http://<zima-ip>:8080`. The first training cycle takes a minute or two. After that
-the trader makes one decision per candle (hourly by default).
+Open `http://<zima-ip>:8080` (or `http://<tailscale-name>:8080`). **The first visit asks
+you to create the password.** Do this right after deploying. The first training cycle
+takes a minute or two. After that the trader makes one decision per candle (hourly by
+default).
 
 ### Option B: install from the ZimaOS dashboard
 
@@ -76,23 +80,69 @@ make the package public under GitHub → Packages → neatbase → Package setti
 Import** and paste `docker-compose.yml`. You can edit the settings in the app's settings
 screen.
 
-Data (candle cache, champion, population checkpoint, trades) is stored in
-`/DATA/AppData/neatbase`. Set `DATA_PATH` to use a different folder on other hosts.
+### Folders on the host
+
+| Host folder | In container | Contents |
+|---|---|---|
+| `/DATA/AppData/neatbase/config` | `/config` (read-only) | **your files:** `cdp_api_key.json`, `settings.env` |
+| `/DATA/AppData/neatbase/data` | `/data` | candle cache, champion, population checkpoint, trades, web password hash |
+
+Set `CONFIG_PATH` / `DATA_PATH` to use other folders on non-ZimaOS hosts.
+
+## Config folder: API keys and settings
+
+Your secrets never go in `docker-compose.yml`. Put them in the config folder on the
+host:
+
+```sh
+mkdir -p /DATA/AppData/neatbase/config
+cp ~/Downloads/cdp_api_key.json /DATA/AppData/neatbase/config/   # the file Coinbase gave you
+chmod 600 /DATA/AppData/neatbase/config/cdp_api_key.json
+docker compose restart
+```
+
+- **`cdp_api_key.json`** is the JSON file you download when you create a key at
+  <https://portal.cdp.coinbase.com/>. It contains `"name"` (or `"id"`) and
+  `"privateKey"`. Both ECDSA and Ed25519 keys work. See `config/cdp_api_key.json.example`.
+  Give the key **View + Trade** permissions only, never Transfer.
+- **`settings.env`** is optional. Any setting from the table below goes here as `KEY=value`
+  lines, and it overrides the compose file and `.env`. See `config/settings.env.example`.
+
+Both files are only read at startup, so run `docker compose restart` after editing.
+When a key is loaded, the dashboard header shows its last 6 characters, and your
+**real Coinbase fee tier** is used for training and paper trading. A key alone never
+enables live trading.
+
+## Web UI access
+
+- **Local networks only.** Requests are refused (HTTP 403) unless they come from LAN
+  (`10/8`, `172.16/12`, `192.168/16`), Tailscale (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`),
+  localhost or link-local. The check uses the connecting IP address and ignores
+  `X-Forwarded-For`-style headers. You can change the list with `ALLOWED_NETWORKS`.
+- **Password set on first login.** It is stored as a salted scrypt hash in
+  `data/auth.json`. Five wrong attempts lock that IP out for 5 minutes. Changing the
+  password (via the **Password** button) signs out all other browsers.
+- **Forgot the password?** `rm /DATA/AppData/neatbase/data/auth.json`, then visit the page
+  and set a new one.
+- Don't port-forward 8080 on your router. Reach it remotely through Tailscale instead.
+  Note that if you put a reverse proxy in front of it on the same host, every request
+  will appear to come from the proxy's local IP.
 
 ## Useful commands
 
 ```sh
 docker compose logs -f trainer           # watch evolution
 docker compose logs -f trader            # every decision, fill and fee
-touch /DATA/AppData/neatbase/STOP        # kill switch: at the next candle, sell and stop buying
-rm /DATA/AppData/neatbase/STOP           # resume
-docker compose down && rm /DATA/AppData/neatbase/trader.db*   # restart paper trading from scratch
-rm /DATA/AppData/neatbase/{champion.pkl,population.ckpt*}     # restart evolution from scratch
+touch /DATA/AppData/neatbase/data/STOP   # same as the Pause button: sell at the next candle, stop buying
+rm /DATA/AppData/neatbase/data/STOP      # resume
+docker compose down && rm /DATA/AppData/neatbase/data/trader.db*   # restart paper trading from scratch
+rm /DATA/AppData/neatbase/data/{champion.pkl,population.ckpt*}     # restart evolution from scratch
 ```
 
 ## Settings
 
-All settings are environment variables. See `.env.example` for the full list with
+Every setting can go in the compose environment, in `.env`, or in
+`config/settings.env` on the host (which wins). See `.env.example` for the full list with
 comments. The most useful ones:
 
 | Variable | Default | |
@@ -112,24 +162,23 @@ Paper trade for a few weeks first, and only go live if the bot beats buy & hold 
 fees* over that period. A good backtest is not evidence; the validation column on the
 dashboard exists because training results look much better than they really are.
 
-1. Create a CDP API key at <https://portal.cdp.coinbase.com/> with **View** and **Trade**
-   permissions only. Never enable transfer/withdraw permissions. If you can, restrict the
+1. Put your `cdp_api_key.json` in the config folder (see above). It needs **View** and
+   **Trade** permissions only; never enable transfer/withdraw. If you can, restrict the
    key to your server's IP.
-2. In `.env`:
+2. Create `/DATA/AppData/neatbase/config/settings.env` with:
    ```sh
-   COINBASE_API_KEY=organizations/.../apiKeys/...
-   COINBASE_API_SECRET=-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----\n
    TRADING_MODE=live
    LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_REAL_MONEY
    LIVE_MAX_USD=50          # the bot never manages more than this
    HALT_DRAWDOWN_PCT=25     # flatten and stop if equity drops this far from its peak
    ```
-3. `docker compose up -d`. The dashboard badge turns red and says **LIVE**.
+3. `docker compose restart`. The dashboard badge turns red and says **LIVE**.
 
 In live mode the bot places market orders through the official `coinbase-advanced-py`
 SDK. It records the real fill price and fees from Coinbase, and only trades its own
 tracked budget (at most `LIVE_MAX_USD`), not your whole balance. Switching between
-paper and live starts a fresh session. The `STOP` file kill switch works in both modes.
+paper and live starts a fresh session. The Pause button / `STOP` file works in both
+modes.
 
 > This is an experiment, not financial advice. Automated trading can lose money quickly,
 > and a strategy that worked in paper trading can fail live.

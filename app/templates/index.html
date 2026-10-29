@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf" content="{{ csrf_token() }}">
 <title>NEATbase</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
@@ -42,6 +43,12 @@
   th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
   th:first-child, td:first-child { text-align: left; }
   th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .actions form { margin: 0; }
+  button, .btn { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 8px; cursor: pointer;
+                 border: 1px solid var(--border); background: var(--card); color: var(--text); text-decoration: none; }
+  button:hover, .btn:hover { border-color: var(--muted); }
+  button.warn { border-color: var(--neg); color: var(--neg); }
   .notice { padding: 10px 14px; border-radius: 8px; border: 1px solid var(--neg); color: var(--neg); margin-bottom: 12px; }
 </style>
 </head>
@@ -51,6 +58,11 @@
     <h1>NEATbase</h1>
     <span id="mode" class="badge">…</span>
     <span id="meta" class="muted"></span>
+    <div class="actions">
+      <button id="pause" type="button" title="Sell any position at the next candle and stop buying">Pause</button>
+      <a class="btn" href="account">Password</a>
+      <form method="post" action="logout"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button>Log out</button></form>
+    </div>
   </header>
   <div id="notices"></div>
 
@@ -119,20 +131,24 @@ function stat(label, value, sub, klass = "") {
 
 async function refresh() {
   const [s, eq, tr, trn] = await Promise.all(
-    ["summary", "equity", "trades", "training"].map(p => fetch("api/" + p).then(r => r.json())));
+    ["summary", "equity", "trades", "training"].map(getJSON));
 
   $("mode").textContent = (s.mode || "paper").toUpperCase();
   $("mode").className = "badge" + (s.mode === "live" ? " live" : "");
   const notices = [];
   if (s.halted) notices.push("Trading halted: drawdown limit reached.");
-  if (s.stop_file) notices.push("STOP file present: no new buys, position will be closed.");
+  if (s.stop_file) notices.push("Paused: any position is sold at the next candle and no new buys are made.");
+  if (s.mode === "live" && !s.api_key) notices.push("Live mode but no API key loaded. Add cdp_api_key.json to the config folder.");
+  $("pause").textContent = s.stop_file ? "Resume" : "Pause";
+  $("pause").className = s.stop_file ? "warn" : "";
+  $("pause").dataset.paused = s.stop_file ? "1" : "";
   $("notices").innerHTML = notices.map(n => `<div class="notice">${n}</div>`).join("");
 
   if (!s.ready) {
-    $("meta").textContent = `${s.product} · waiting for the trainer's first champion…`;
+    $("meta").textContent = `${s.product} · waiting for the trainer's first champion…` + keyInfo(s);
   } else {
     $("meta").textContent = `${s.product} · ${s.granularity / 60}m candles · taker fee ${(s.taker_fee * 100).toFixed(2)}% · slippage ${s.slippage_bps}bps · since ${ts(s.started_at)}` +
-      (s.last_update ? ` · updated ${ts(s.last_update)}` : "");
+      (s.last_update ? ` · updated ${ts(s.last_update)}` : "") + keyInfo(s);
     const c = s.champion || {};
     $("stats").innerHTML = [
       stat("Equity", usd(s.equity), `started ${usd(s.start_equity)}`),
@@ -182,6 +198,24 @@ async function refresh() {
       <td>${r.champion_validation ? pct(r.champion_validation.return_pct) : "–"}</td>
       <td>${r.promoted ? "yes" : "no"}</td></tr>`).join("")
       : `<tr><td colspan="10" class="muted">First training cycle is running. Check <code>docker compose logs -f trainer</code>.</td></tr>`);
+}
+
+function keyInfo(s) {
+  return s.api_key ? ` · API key ${s.api_key} (${s.api_key_source})` : " · no API key";
+}
+
+$("pause").addEventListener("click", async () => {
+  const paused = !$("pause").dataset.paused;
+  if (paused && !confirm("Pause trading? Any open position is sold at the next candle close.")) return;
+  await fetch("api/pause", {method: "POST", headers: {"Content-Type": "application/json",
+    "X-CSRF-Token": document.querySelector('meta[name="csrf"]').content}, body: JSON.stringify({paused})});
+  refresh();
+});
+
+async function getJSON(p) {
+  const r = await fetch("api/" + p);
+  if (r.status === 401) { location.href = "login"; throw new Error("signed out"); }
+  return r.json();
 }
 
 refresh();

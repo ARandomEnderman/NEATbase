@@ -1,13 +1,18 @@
-"""Small read-only dashboard: paper/live performance vs buy & hold, trades, training."""
+"""Dashboard: paper/live performance vs buy & hold, trades, training, and a pause switch."""
 import json
 import os
 import sqlite3
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
-from . import config
+from . import auth, config
 
 app = Flask(__name__)
+auth.install(app)
+
+
+def _mask(key):
+    return f"…{key[-6:]}" if key else None
 
 
 def _q(path, sql, args=()):
@@ -36,8 +41,10 @@ def index():
 @app.route("/api/summary")
 def summary():
     st = _state()
+    keys = {"api_key": _mask(config.COINBASE_API_KEY), "api_key_source": config.API_KEY_SOURCE,
+            "stop_file": os.path.exists(config.KILL_SWITCH_PATH)}
     if not st:
-        return jsonify({"ready": False, "product": config.PRODUCT_ID, "mode": config.TRADING_MODE})
+        return jsonify({"ready": False, "product": config.PRODUCT_ID, "mode": config.TRADING_MODE, **keys})
     s = st["session"]
     eq = _q(config.TRADER_DB, "SELECT equity, benchmark FROM equity WHERE session=? ORDER BY ts", (s,))
     trades = _q(config.TRADER_DB, "SELECT side, fee, pnl FROM trades WHERE session=?", (s,))
@@ -62,9 +69,18 @@ def summary():
         "max_drawdown_pct": 100 * max_dd, "in_position": st["qty"] > 0,
         "cash": st["cash"], "qty": st["qty"], "last_price": st.get("last_price"),
         "last_output": st.get("last_output"), "halted": st["halted"],
-        "stop_file": os.path.exists(config.KILL_SWITCH_PATH),
-        "champion": st.get("champion"),
+        "champion": st.get("champion"), **keys,
     })
+
+
+@app.route("/api/pause", methods=["POST"])
+def pause():
+    """Same as the STOP file: flatten at the next candle and stop buying."""
+    if (request.get_json(silent=True, force=True) or {}).get("paused"):
+        open(config.KILL_SWITCH_PATH, "a").close()
+    elif os.path.exists(config.KILL_SWITCH_PATH):
+        os.remove(config.KILL_SWITCH_PATH)
+    return jsonify({"paused": os.path.exists(config.KILL_SWITCH_PATH)})
 
 
 @app.route("/api/equity")

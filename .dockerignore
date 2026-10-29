@@ -4,3 +4,5 @@ data
 tests
 **/__pycache__
 .env
+config
+*.pem

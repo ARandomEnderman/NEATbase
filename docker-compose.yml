@@ -1,6 +1,8 @@
 # NEATbase: NEAT neuroevolution trader on live Coinbase data.
-# Paper trading by default. Every setting below can be changed here, in a .env
-# file next to this one, or in the ZimaOS app settings screen.
+# Paper trading by default. Settings can be changed here, in a .env file next to
+# this one, in the ZimaOS app settings screen, or (taking precedence over all of
+# those) in /DATA/AppData/neatbase/config/settings.env on the host.
+# Coinbase API keys go in /DATA/AppData/neatbase/config/cdp_api_key.json - never here.
 name: neatbase
 
 x-env: &env
@@ -12,9 +14,6 @@ x-env: &env
   POSITION_FRACTION: ${POSITION_FRACTION:-1.0}
   BUY_THRESHOLD: ${BUY_THRESHOLD:-0.2}
   SELL_THRESHOLD: ${SELL_THRESHOLD:--0.2}
-  # Optional: with keys set, your real Coinbase fee tier is used everywhere.
-  COINBASE_API_KEY: ${COINBASE_API_KEY:-}
-  COINBASE_API_SECRET: ${COINBASE_API_SECRET:-}
   TZ: ${TZ:-UTC}
 
 x-app: &app
@@ -22,7 +21,8 @@ x-app: &app
   build: .
   restart: unless-stopped
   volumes:
-    - ${DATA_PATH:-/DATA/AppData/neatbase}:/data
+    - ${DATA_PATH:-/DATA/AppData/neatbase/data}:/data
+    - ${CONFIG_PATH:-/DATA/AppData/neatbase/config}:/config:ro
 
 services:
   trainer:
@@ -57,8 +57,10 @@ services:
       LIVE_CONFIRM: ${LIVE_CONFIRM:-}             # I_UNDERSTAND_THIS_USES_REAL_MONEY
       LIVE_MAX_USD: ${LIVE_MAX_USD:-50}
       HALT_DRAWDOWN_PCT: ${HALT_DRAWDOWN_PCT:-25}
+      # Web UI is only reachable from these networks (LAN, Tailscale, localhost)
+      ALLOWED_NETWORKS: ${ALLOWED_NETWORKS:-127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,100.64.0.0/10,::1/128,fc00::/7,fe80::/10}
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/summary', timeout=5)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=5)"]
       interval: 60s
       timeout: 10s
       retries: 3

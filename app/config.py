@@ -1,17 +1,51 @@
-"""All runtime settings, read from environment variables (see .env.example)."""
+"""All runtime settings. Each one is read from, in order of precedence:
+1. CONFIG_DIR/settings.env on the host (optional, KEY=VALUE lines)
+2. environment variables (docker-compose.yml / .env)
+3. the defaults below
+Coinbase API keys are read from CONFIG_DIR/cdp_api_key.json (see README)."""
+import json
 import os
+
+CONFIG_DIR = os.environ.get("CONFIG_DIR", "/config")
+SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.env")
+API_KEY_FILE = os.path.join(CONFIG_DIR, "cdp_api_key.json")
+
+
+def _read_settings_file(path):
+    out = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+                    v = v[1:-1]
+                out[k.strip()] = v
+    except FileNotFoundError:
+        pass
+    return out
+
+
+_FILE = _read_settings_file(SETTINGS_FILE)
+
+
+def _get(name, default):
+    return _FILE.get(name, os.environ.get(name, default))
 
 
 def _f(name, default):
-    return float(os.environ.get(name, default))
+    return float(_get(name, default))
 
 
 def _i(name, default):
-    return int(os.environ.get(name, default))
+    return int(_get(name, default))
 
 
 def _s(name, default):
-    return os.environ.get(name, default).strip()
+    return str(_get(name, default)).strip()
 
 
 DATA_DIR = _s("DATA_DIR", "/data")
@@ -50,10 +84,24 @@ WEB_PORT = _i("WEB_PORT", 8080)
 
 # Live trading (only used when TRADING_MODE=live)
 COINBASE_API_KEY = _s("COINBASE_API_KEY", "")
-COINBASE_API_SECRET = os.environ.get("COINBASE_API_SECRET", "").replace("\\n", "\n").strip()
+COINBASE_API_SECRET = _s("COINBASE_API_SECRET", "").replace("\\n", "\n")
+API_KEY_SOURCE = "settings" if COINBASE_API_KEY else None
+if os.path.exists(API_KEY_FILE):
+    # The JSON file you download when creating a key on portal.cdp.coinbase.com
+    with open(API_KEY_FILE) as f:
+        _key = json.load(f)
+    COINBASE_API_KEY = (_key.get("name") or _key.get("id") or "").strip()
+    COINBASE_API_SECRET = (_key.get("privateKey") or "").strip()
+    API_KEY_SOURCE = "cdp_api_key.json"
 LIVE_CONFIRM = _s("LIVE_CONFIRM", "")  # must equal I_UNDERSTAND_THIS_USES_REAL_MONEY
 LIVE_MAX_USD = _f("LIVE_MAX_USD", 50.0)  # the bot never manages more than this much USD
 HALT_DRAWDOWN_PCT = _f("HALT_DRAWDOWN_PCT", 25.0)  # stop trading if equity falls this far from its peak
+
+# Web UI: only these source networks may connect (LAN, Tailscale, loopback, link-local)
+ALLOWED_NETWORKS = [n.strip() for n in _s(
+    "ALLOWED_NETWORKS",
+    "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,100.64.0.0/10,"
+    "::1/128,fc00::/7,fe80::/10").split(",") if n.strip()]
 
 GRANULARITY_NAMES = {
     60: "ONE_MINUTE",
@@ -73,6 +121,8 @@ TRAINER_DB = os.path.join(DATA_DIR, "trainer.db")
 TRADER_DB = os.path.join(DATA_DIR, "trader.db")
 CHECKPOINT_PATH = os.path.join(DATA_DIR, "population.ckpt")
 KILL_SWITCH_PATH = os.path.join(DATA_DIR, "STOP")
+AUTH_PATH = os.path.join(DATA_DIR, "auth.json")
+SECRET_KEY_PATH = os.path.join(DATA_DIR, "web_secret.key")
 NEAT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "neat_config.ini")
 
 
