@@ -289,16 +289,17 @@ async function refresh() {
       <td>${c.status === "waiting" ? `on probation, ${days(c.eligible_at)} left` : status[c.status] || c.status}</td></tr>`).join("")
       : `<tr><td colspan="7" class="muted">No challengers yet.</td></tr>`);
 
-  $("runs").innerHTML = "<tr><th>Time</th><th>Gen</th><th>Train</th><th>Validation</th><th>Val B&amp;H</th><th>Val trades</th><th>Val fees</th><th>Val max DD</th><th>Champion val</th><th>Outcome</th></tr>" +
+  $("runs").innerHTML = "<tr><th>Time</th><th>Gen</th><th>Train</th><th>Validation</th><th>Val alpha</th><th>Val B&amp;H</th><th>Val trades</th><th>Val fees</th><th>Val max DD</th><th>Champion val</th><th>Outcome</th></tr>" +
     (trn.runs.length ? trn.runs.map(r => `<tr><td>${ts(r.ts)}</td><td>${r.generation}</td>
       <td class="${cls(r.train.return_pct)}">${pct(r.train.return_pct)}</td>
       <td class="${cls(r.validation.return_pct)}">${pct(r.validation.return_pct)}</td>
+      <td class="${cls(r.validation.alpha_pct)}">${r.validation.alpha_pct == null ? "–" : (r.validation.alpha_pct >= 0 ? "+" : "") + r.validation.alpha_pct.toFixed(2)}</td>
       <td class="${cls(r.validation.buy_hold_pct)}">${pct(r.validation.buy_hold_pct)}</td>
       <td>${r.validation.trades}</td><td>${usd(r.validation.fees_paid)}</td>
       <td>${r.validation.max_drawdown_pct.toFixed(2)}%</td>
       <td>${r.champion_validation ? pct(r.champion_validation.return_pct) : "–"}</td>
       <td style="text-align:left">${r.status || (r.promoted ? "promoted" : "")}</td></tr>`).join("")
-      : `<tr><td colspan="10" class="muted">First training cycle is running. Check <code>docker logs -f neatbase-trainer</code>.</td></tr>`);
+      : `<tr><td colspan="11" class="muted">First training cycle is running. Check <code>docker logs -f neatbase-trainer</code>.</td></tr>`);
 }
 
 function keyInfo(s) {

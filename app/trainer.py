@@ -289,9 +289,10 @@ def train_cycle(pop, cfg, cache, db, fee_rates):
         status = add_challenger(db, cand, now_bar, pop.generation, _strip(val))
     else:
         status = "rejected: lost to champion on validation"
-    log.info("Candidate: train %+.2f%% | validation %+.2f%% (buy&hold %+.2f%%, %d trades, fees $%.2f) | "
-             "champion validation %s -> %s", train["return_pct"], val["return_pct"], val["buy_hold_pct"],
-             val["trades"], val["fees_paid"],
+    log.info("Candidate: train %+.2f%% (alpha %+.2f) | validation %+.2f%% (alpha %+.2f, %.0f%% invested, "
+             "buy&hold %+.2f%%, %d trades, fees $%.2f) | champion validation %s -> %s", train["return_pct"],
+             train["alpha_pct"], val["return_pct"], val["alpha_pct"], 100 * val["avg_exposure"],
+             val["buy_hold_pct"], val["trades"], val["fees_paid"],
              f"{champ_val['return_pct']:+.2f}%" if champ_val else "none", status)
     db.execute("INSERT INTO runs (ts, generation, train, validation, champion_validation, promoted, nodes, "
                "conns, costs, val_curve, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (

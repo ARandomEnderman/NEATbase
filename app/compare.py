@@ -73,20 +73,27 @@ def main():
             t0 = time.time()
             tr, va, (nodes, conns) = run_one(cfg, train_w, val_w, costs, args.generations, workers)
             rows.append((g, tr, va))
-            print(f"{g // 60:>5}m run {r + 1}: train {tr['return_pct']:+7.2f}% | unseen {va['return_pct']:+7.2f}% "
-                  f"(buy&hold {va['buy_hold_pct']:+.2f}%) | {va['trades']:3d} trades | fees ${va['fees_paid']:7.2f} "
-                  f"| {nodes}n/{conns}c | {time.time() - t0:.0f}s", flush=True)
+            print(f"{g // 60:>5}m run {r + 1}: train {tr['return_pct']:+7.2f}% alpha {tr['alpha_pct']:+6.2f} | "
+                  f"unseen {va['return_pct']:+7.2f}% alpha {va['alpha_pct']:+6.2f} "
+                  f"({va['avg_exposure']:.0%} invested, buy&hold {va['buy_hold_pct']:+.2f}%) | "
+                  f"{va['trades']:3d} trades | fees ${va['fees_paid']:7.2f} | {nodes}n/{conns}c | "
+                  f"{time.time() - t0:.0f}s", flush=True)
 
-    print("\nSummary on unseen data (median of runs; per-coin pot $1000, buy & hold is 100% invested):")
-    print(f"{'candle':>8} {'train':>9} {'unseen':>9} {'worst run':>10} {'buy&hold':>9} {'trades':>7} {'max DD':>7}")
+    print(f"\nSummary on unseen data (median of runs; per-coin pot $1000; buy & hold is 100% invested)."
+          f"\nalpha = return beyond holding the same average % invested the whole time "
+          f"(scoring: {config.FITNESS_MODE}):")
+    print(f"{'candle':>8} {'train α':>9} {'unseen':>9} {'unseen α':>9} {'worst α':>9} {'invested':>9} "
+          f"{'buy&hold':>9} {'trades':>7} {'max DD':>7}")
     for g in grans:
         rs = [(tr, va) for gg, tr, va in rows if gg == g]
         med = lambda xs: statistics.median(xs)
-        print(f"{g // 60:>7}m {med([t['return_pct'] for t, _ in rs]):+8.2f}% "
-              f"{med([v['return_pct'] for _, v in rs]):+8.2f}% {min(v['return_pct'] for _, v in rs):+9.2f}% "
+        print(f"{g // 60:>7}m {med([t['alpha_pct'] for t, _ in rs]):+9.2f} "
+              f"{med([v['return_pct'] for _, v in rs]):+8.2f}% {med([v['alpha_pct'] for _, v in rs]):+9.2f} "
+              f"{min(v['alpha_pct'] for _, v in rs):+9.2f} {med([v['avg_exposure'] for _, v in rs]):9.0%} "
               f"{rs[0][1]['buy_hold_pct']:+8.2f}% {med([v['trades'] for _, v in rs]):7.0f} "
               f"{med([v['max_drawdown_pct'] for _, v in rs]):6.2f}%")
-    print("\nJudge by 'unseen' and 'worst run', not 'train'. A big train/unseen gap means overfitting.")
+    print("\nReal timing skill = positive 'unseen α' in every run ('worst α' > 0). Alpha near zero or below "
+          "means it's no better than just holding that much.")
 
 
 if __name__ == "__main__":

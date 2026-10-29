@@ -134,3 +134,37 @@ def test_never_more_than_the_cap_invested():
     assert seen[0] == -1.0 and max(seen) <= 1.0
     # with half the pot invested it moves about half as much as buy & hold
     assert abs(r["return_pct"]) < abs(r["buy_hold_pct"])
+
+
+def _trend(n=N, step=0.002):
+    p, out = 100.0, []
+    for i in range(n):
+        o, p = p, p * (1 + step)
+        out.append((i * 3600, o, max(o, p) * 1.001, min(o, p) * 0.999, p, 5.0))
+    return out
+
+
+def test_alpha_scores_buy_and_hold_near_zero_even_in_a_bull_market():
+    candles = _trend()  # +80% over the backtest
+    feats = features.market_features(candles, 3600)
+    r = backtest(lambda x: [1.0], feats, candles, features.WARMUP, N, TAKER, chunks=4)
+    assert r["return_pct"] > 30  # raw return looks great...
+    assert -3 < r["alpha_pct"] < 0  # ...but beyond holding 50% it's just the fees
+    assert 0.5 < r["avg_exposure"] < 0.8  # starts at 50%, drifts up as the coin rises
+    assert r["fitness"] < 1
+
+
+def test_alpha_rewards_real_timing():
+    # alternating up and down legs; a policy that knows the next leg is long only in up legs
+    candles, p = [], 100.0
+    for i in range(N):
+        up = (i // 40) % 2 == 0
+        o, p = p, p * (1.004 if up else 0.996)
+        candles.append((i * 3600, o, max(o, p) * 1.001, min(o, p) * 0.999, p, 5.0))
+    feats = features.market_features(candles, 3600)
+    bar = iter(range(features.WARMUP, N))
+    timer = backtest(lambda x: [1.0 if ((next(bar) + 1) // 40) % 2 == 0 else -1.0], feats, candles,
+                     features.WARMUP, N, TAKER, chunks=4)
+    holder = backtest(lambda x: [1.0], feats, candles, features.WARMUP, N, TAKER, chunks=4)
+    assert timer["alpha_pct"] > 10 > holder["alpha_pct"]
+    assert timer["fitness"] > holder["fitness"] + 10

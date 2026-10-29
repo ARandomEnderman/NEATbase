@@ -83,6 +83,9 @@ RETRAIN_INTERVAL_HOURS = _f("RETRAIN_INTERVAL_HOURS", 3)
 POP_SIZE = _i("POP_SIZE", 150)
 NUM_WORKERS = _i("NUM_WORKERS", 0)  # 0 = all CPU cores
 FITNESS_CHUNKS = _i("FITNESS_CHUNKS", 4)  # score consistency across this many sub-periods
+# alpha: score = return beyond simply holding the same average amount of the coin, so
+# riding a bull market scores ~0 and only timing counts. return: raw return.
+FITNESS_MODE = _s("FITNESS_MODE", "alpha").lower()
 DRAWDOWN_PENALTY = _f("DRAWDOWN_PENALTY", 0.5)
 INACTIVITY_PENALTY = _f("INACTIVITY_PENALTY", 0.25)
 # A candidate that beats the champion on validation must then also beat it on data
@@ -128,6 +131,8 @@ GRANULARITY_NAMES = {
 }
 if GRANULARITY not in GRANULARITY_NAMES:
     raise SystemExit(f"GRANULARITY must be one of {sorted(GRANULARITY_NAMES)}")
+if FITNESS_MODE not in ("alpha", "return"):
+    raise SystemExit("FITNESS_MODE must be alpha or return")
 if ORDER_TYPE not in ("maker", "taker"):
     raise SystemExit("ORDER_TYPE must be maker or taker")
 if not PRODUCT_IDS:

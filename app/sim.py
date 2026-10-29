@@ -86,7 +86,11 @@ def backtest(activate, feats, candles, start, end, costs, start_cash=1000.0,
     trades, wins, fees = 0, 0, 0.0
     peak, max_dd = start_cash, 0.0
     bounds = set(start + (end - start) * k // chunks for k in range(1, chunks + 1))
-    chunk_equity = [start_cash]
+    # alpha per chunk: the chunk's return minus what holding the chunk's *average*
+    # exposure the whole time would have made. Only timing beats that benchmark.
+    chunk_equity, chunk_alpha = [start_cash], []
+    chunk_px, chunk_exp, chunk_bars = candles[start][4], 0.0, 0
+    prev_exp, exp_sum = 0.0, 0.0
     curve, log = [], []
 
     def do_buy(spend, price, fee_rate, t):
@@ -147,18 +151,30 @@ def backtest(activate, feats, candles, start, end, costs, start_cash=1000.0,
         elif qty > 0:
             held += 1
 
-        equity = cash + (sell_base(qty, sell_px, costs.taker_fee)[0] if qty > 0 else 0.0)
+        value = sell_base(qty, sell_px, costs.taker_fee)[0] if qty > 0 else 0.0
+        equity = cash + value
+        chunk_exp += prev_exp  # exposure held during this bar's move
+        chunk_bars += 1
+        exp_sum += prev_exp
+        prev_exp = value / equity if equity > 0 else 0.0
         peak = max(peak, equity)
         max_dd = max(max_dd, 1 - equity / peak)
         if i + 1 in bounds:
+            avg_exp = chunk_exp / max(1, chunk_bars)
+            chunk_alpha.append(100 * (math.log(max(equity, 1e-9) / chunk_equity[-1])
+                                      - avg_exp * math.log(close / chunk_px)))
             chunk_equity.append(equity)
+            chunk_px, chunk_exp, chunk_bars = close, 0.0, 0
         if record:
             curve.append((bar[0], equity))
 
     if qty > 0:
         trades += 1  # an open position counts as a (marked-to-market) trade
 
-    rets = [100 * math.log(max(b, 1e-9) / a) for a, b in zip(chunk_equity, chunk_equity[1:])]
+    if config.FITNESS_MODE == "alpha":
+        rets = chunk_alpha
+    else:
+        rets = [100 * math.log(max(b, 1e-9) / a) for a, b in zip(chunk_equity, chunk_equity[1:])]
     total = sum(rets)
     std = 0.0
     if len(rets) > 1:
@@ -176,6 +192,8 @@ def backtest(activate, feats, candles, start, end, costs, start_cash=1000.0,
         "final_equity": chunk_equity[-1],
         "return_pct": 100 * (chunk_equity[-1] / start_cash - 1),
         "buy_hold_pct": 100 * (bh / start_cash - 1),
+        "alpha_pct": sum(chunk_alpha),  # in log-%, summed over chunks
+        "avg_exposure": exp_sum / max(1, end - start),
         "max_drawdown_pct": 100 * max_dd,
         "trades": trades,
         "win_rate": wins / trades if trades else 0.0,
@@ -208,6 +226,8 @@ def backtest_many(activate, windows, costs, chunks=1, record=False):
         "fitness": sum(r["fitness"] for r in rs) / n,
         "return_pct": sum(r["return_pct"] for r in rs) / n,
         "buy_hold_pct": sum(r["buy_hold_pct"] for r in rs) / n,
+        "alpha_pct": sum(r["alpha_pct"] for r in rs) / n,
+        "avg_exposure": sum(r["avg_exposure"] for r in rs) / n,
         "max_drawdown_pct": max(r["max_drawdown_pct"] for r in rs),
         "trades": sum(r["trades"] for r in rs),
         "fees_paid": sum(r["fees_paid"] for r in rs),

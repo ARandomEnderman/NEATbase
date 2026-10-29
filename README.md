@@ -23,6 +23,13 @@ two-container Docker Compose app and is built for ZimaOS.
   score is the average across coins, which rewards strategies that work on more than
   one coin. The population is checkpointed and keeps evolving every
   `RETRAIN_INTERVAL_HOURS`.
+- **Score = timing skill (alpha), not raw return.** If raw return were the goal, the
+  easiest high score in a bull market would be to buy and never sell. So each period is
+  scored as the bot's return **minus what simply holding its average % invested the
+  whole time would have made**. Buy & hold scores about 0 (minus fees). Only being more
+  invested before rises and less before drops scores positive. On top of that, the score
+  subtracts unevenness across 4 sub-periods, 0.5 × the largest drop from peak, and 0.25
+  if it never trades. `FITNESS_MODE=return` switches back to scoring raw return.
 - **Two-stage promotion,** so lucky or overfitted networks don't get to trade:
   1. **Validation:** the cycle's best network must beat the champion on the last
      `VALIDATION_DAYS` (14), which it never trained on. If it does, it becomes a
